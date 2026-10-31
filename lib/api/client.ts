@@ -1,33 +1,21 @@
-// API 客户端，包含模拟数据用于开发和演示
-import type { ApiResponse, User as Employee, Room, Order, OrderItem, Product, Member } from "@/lib/types"
+// API 客户端：显式 Mock + 门店作用域契约
+import type {
+  ApiResponse,
+  Session,
+  User as Employee,
+  Room,
+  Order,
+  OrderItem,
+  Product,
+  Member,
+} from "@/lib/types"
+import { RoomStatus } from "@/lib/types"
+import { apiRoutes, API_PATHS } from "@/lib/api/routes"
+import { runtimeConfig } from "@/lib/config/runtime"
+import { PREVIEW_SESSION, createPreviewRooms } from "@/lib/mocks/preview-session"
 
-// 模拟数据
+// 模拟数据（仅非门店实体保留；包厢统一走 preview-session 的门店作用域数据）
 const mockData = {
-  rooms: [
-    {
-      id: "room-001",
-      name: "豪华包厢A",
-      type: "VIP",
-      status: "available",
-      capacity: 8,
-      hourlyRate: 200,
-      currentOrder: null,
-      equipment: ["KTV", "投影", "酒柜"],
-      lastCleaned: new Date().toISOString(),
-    },
-    {
-      id: "room-002",
-      name: "标准包厢B",
-      type: "Standard",
-      status: "occupied",
-      capacity: 6,
-      hourlyRate: 150,
-      currentOrder: "order-001",
-      equipment: ["KTV", "投影"],
-      lastCleaned: new Date().toISOString(),
-    },
-  ] as any[],
-
   products: [
     {
       id: "prod-001",
@@ -99,23 +87,31 @@ const mockData = {
   ] as any[],
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status = 0,
+    public readonly code = "api_error",
+  ) {
+    super(message)
+    this.name = "ApiError"
+  }
+}
+
+/** 会话绑定的 CSRF 令牌：仅保存在内存，随登录/会话/刷新响应更新。 */
+let csrfToken: string | null = null
+
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
+
 class ApiClient {
   private baseUrl: string
-  private token: string | null = null
-  private isClient: boolean
+  private useMock: boolean
+  private timeoutMs: number
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, options: { useMock?: boolean; timeoutMs?: number } = {}) {
     this.baseUrl = baseUrl
-    this.isClient = typeof window !== "undefined"
-
-    if (this.isClient) {
-      try {
-        this.token = localStorage.getItem("auth_token")
-      } catch (error) {
-        console.warn("无法访问localStorage:", error)
-        this.token = null
-      }
-    }
+    this.useMock = options.useMock ?? false
+    this.timeoutMs = options.timeoutMs ?? 10_000
   }
 
   private async mockRequest<T>(data: T, delay = 500): Promise<ApiResponse<T>> {
@@ -129,49 +125,91 @@ class ApiClient {
     }
   }
 
+  private rememberSession(session: Session | undefined | null): void {
+    if (session?.csrfToken) {
+      csrfToken = session.csrfToken
+    }
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
-    // 在开发环境中使用模拟数据
-    if (process.env.NODE_ENV === "development" || !this.baseUrl.startsWith("http")) {
+    // 仅显式开启 Mock 时使用模拟数据，避免生产环境把失败当成功。
+    if (this.useMock) {
       return this.handleMockRequest<T>(endpoint, options)
     }
 
+    if (!this.baseUrl) {
+      throw new ApiError("API 地址未配置：请设置 NEXT_PUBLIC_API_BASE_URL", 0, "missing_base_url")
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    options.signal?.addEventListener("abort", () => controller.abort(), { once: true })
+
     const url = `${this.baseUrl}${endpoint}`
-    const headers = {
-      "Content-Type": "application/json",
-      ...(this.token && { Authorization: `Bearer ${this.token}` }),
-      ...options.headers,
+    const method = (options.method ?? "GET").toUpperCase()
+    const headers = new Headers(options.headers)
+    if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json")
+    }
+    if (UNSAFE_METHODS.has(method) && csrfToken && !headers.has("X-CSRF-Token")) {
+      headers.set("X-CSRF-Token", csrfToken)
+    }
+
+    let response: Response
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+        signal: controller.signal,
+        credentials: "include",
+      })
+    } catch {
+      if (controller.signal.aborted) {
+        throw new ApiError("请求超时，请检查网络后重试", 0, "timeout")
+      }
+      throw new ApiError("网络请求失败，请检查网络后重试", 0, "network_error")
+    } finally {
+      clearTimeout(timeout)
+    }
+
+    if (!response.ok) {
+      let message = `接口返回异常（HTTP ${response.status}）`
+      let code = "http_error"
+      try {
+        const body = (await response.json()) as ApiResponse<unknown>
+        message = body.error ?? body.message ?? message
+        code = body.code ?? code
+      } catch {
+        // 非 JSON 错误体保留默认信息
+      }
+      throw new ApiError(message, response.status, code)
     }
 
     try {
-      const response = await fetch(url, {
-        ...options,
-        headers,
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      const data = await response.json()
-      return data
-    } catch (error) {
-      console.error("API request failed:", error)
-      // 降级到模拟数据
-      return this.handleMockRequest<T>(endpoint, options)
+      return (await response.json()) as ApiResponse<T>
+    } catch {
+      throw new ApiError("接口响应不是合法 JSON", response.status, "invalid_json")
     }
   }
 
   private async handleMockRequest<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
     console.log(`🔄 使用模拟数据: ${options.method || "GET"} ${endpoint}`)
 
-    // 根据端点返回相应的模拟数据
-    if (endpoint === "/rooms") {
-      return this.mockRequest(mockData.rooms as T)
+    if (endpoint === API_PATHS.session) {
+      return this.mockRequest(PREVIEW_SESSION as T)
     }
 
-    if (endpoint.startsWith("/rooms/")) {
-      const roomId = endpoint.split("/")[2]
-      const room = mockData.rooms.find((r) => r.id === roomId)
+    const storeRoomsMatch = endpoint.match(/^\/stores\/([^/]+)\/rooms$/)
+    if (storeRoomsMatch) {
+      const storeId = decodeURIComponent(storeRoomsMatch[1])
+      return this.mockRequest(createPreviewRooms(storeId) as T)
+    }
+
+    const storeRoomMatch = endpoint.match(/^\/stores\/([^/]+)\/rooms\/([^/]+)$/)
+    if (storeRoomMatch) {
+      const storeId = decodeURIComponent(storeRoomMatch[1])
+      const roomId = decodeURIComponent(storeRoomMatch[2])
+      const room = createPreviewRooms(storeId).find((item) => item.id === roomId)
       return this.mockRequest(room as T)
     }
 
@@ -206,68 +244,129 @@ class ApiClient {
     return this.mockRequest({ success: true } as T)
   }
 
-  // 认证相关
-  async login(_username: string, _password: string) {
-    const mockToken = "mock-jwt-token-" + Date.now()
-    const mockUser = mockData.employees[0]
+  // 会话与门店上下文
+  async getSession(): Promise<ApiResponse<Session>> {
+    const response = await this.request<Session>(apiRoutes.session())
+    this.rememberSession(response.data)
+    return response
+  }
 
-    if (this.isClient) {
-      try {
-        localStorage.setItem("auth_token", mockToken)
-      } catch (error) {
-        console.warn("无法保存token到localStorage:", error)
-      }
+  // 认证相关（真实模式使用 HttpOnly Cookie，不在前端保存 Token）
+  async login(username: string, password: string) {
+    if (!this.useMock) {
+      const response = await this.request<{ session: Session }>(apiRoutes.login(), {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      })
+      this.rememberSession(response.data?.session)
+      return response
     }
 
-    this.token = mockToken
+    return this.mockRequest({ session: PREVIEW_SESSION })
+  }
 
-    return this.mockRequest({ token: mockToken, user: mockUser })
+  /** 滑动续期：返回新的过期时间，并刷新 Cookie。 */
+  async refreshSession(): Promise<ApiResponse<Session>> {
+    if (!this.useMock) {
+      const response = await this.request<{ session: Session }>(apiRoutes.refresh(), {
+        method: "POST",
+      })
+      const session = response.data?.session
+      this.rememberSession(session)
+      return { ...response, data: session }
+    }
+    return this.mockRequest(PREVIEW_SESSION)
   }
 
   async logout() {
-    if (this.isClient) {
+    if (!this.useMock) {
       try {
-        localStorage.removeItem("auth_token")
-      } catch (error) {
-        console.warn("无法从localStorage删除token:", error)
+        return await this.request<{ success: boolean }>(apiRoutes.logout(), { method: "POST" })
+      } finally {
+        csrfToken = null
       }
     }
-    this.token = null
     return this.mockRequest({ success: true })
   }
 
-  // 包厢管理 API
-  async getRooms(): Promise<ApiResponse<Room[]>> {
-    return this.request("/rooms")
+  // 包厢管理 API（全部按门店作用域）
+  async getRooms(storeId: string): Promise<ApiResponse<Room[]>> {
+    return this.request(apiRoutes.rooms(storeId))
   }
 
-  async getRoomById(id: string): Promise<ApiResponse<Room>> {
-    return this.request(`/rooms/${id}`)
+  async getRoomById(storeId: string, id: string): Promise<ApiResponse<Room>> {
+    return this.request(apiRoutes.room(storeId, id))
   }
 
-  async updateRoomStatus(id: string, status: string, data?: any): Promise<ApiResponse<Room>> {
-    return this.request(`/rooms/${id}/status`, {
-      method: "PUT",
-      body: JSON.stringify({ status, ...data }),
-    })
-  }
-
-  async startRoom(roomId: string, customerId?: string, packageId?: string): Promise<ApiResponse<any>> {
-    const mockOrder = {
-      id: `order-${Date.now()}`,
-      roomId,
-      customerId,
-      packageId,
-      status: "active",
-      startTime: new Date().toISOString(),
-      items: [],
-      total: 0,
+  async updateRoomStatus(
+    storeId: string,
+    id: string,
+    status: RoomStatus,
+    data?: Record<string, unknown>,
+  ): Promise<ApiResponse<Room>> {
+    if (!this.useMock) {
+      return this.request(apiRoutes.roomStatus(storeId, id), {
+        method: "PUT",
+        body: JSON.stringify({ status, ...data }),
+      })
     }
-    return this.mockRequest(mockOrder)
+
+    const room = createPreviewRooms(storeId).find((item) => item.id === id)
+    return this.mockRequest({ ...room, status } as Room)
   }
 
-  async checkoutRoom(_roomId: string): Promise<ApiResponse<{ orderId: string; total: number }>> {
-    return this.mockRequest({ orderId: `order-${Date.now()}`, total: 299.5 })
+  async startRoom(
+    storeId: string,
+    roomId: string,
+    customerId?: string,
+    packageId?: string,
+  ): Promise<ApiResponse<{ room: Room; orderId: string }>> {
+    if (!this.useMock) {
+      return this.request(apiRoutes.startRoom(storeId, roomId), {
+        method: "POST",
+        body: JSON.stringify({ customerId, packageId }),
+      })
+    }
+
+    const room = createPreviewRooms(storeId).find((item) => item.id === roomId)
+    return this.mockRequest({
+      room: room ? { ...room, status: RoomStatus.OCCUPIED } : null,
+      orderId: `order-${Date.now()}`,
+    } as { room: Room; orderId: string })
+  }
+
+  async checkoutRoom(
+    storeId: string,
+    roomId: string,
+    idempotencyKey?: string,
+  ): Promise<ApiResponse<{ room: Room; orderId: string; totalCents: number; billableHours: number }>> {
+    if (!this.useMock) {
+      const headers: Record<string, string> = {}
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey
+      }
+      return this.request(apiRoutes.checkoutRoom(storeId, roomId), {
+        method: "POST",
+        headers,
+      })
+    }
+
+    const room = createPreviewRooms(storeId).find((item) => item.id === roomId)
+    return this.mockRequest({
+      room: room ? { ...room, status: RoomStatus.CLEANING } : null,
+      orderId: `order-${Date.now()}`,
+      totalCents: room?.priceCents ?? 0,
+      billableHours: 1,
+    } as { room: Room; orderId: string; totalCents: number; billableHours: number })
+  }
+
+  async cleanRoom(storeId: string, roomId: string): Promise<ApiResponse<Room>> {
+    if (!this.useMock) {
+      return this.request(apiRoutes.cleanRoom(storeId, roomId), { method: "POST" })
+    }
+
+    const room = createPreviewRooms(storeId).find((item) => item.id === roomId)
+    return this.mockRequest({ ...room, status: RoomStatus.AVAILABLE } as Room)
   }
 
   // 订单管理 API
@@ -344,6 +443,9 @@ class ApiClient {
   }
 
   async getMemberByPhone(phone: string): Promise<ApiResponse<Member>> {
+    if (!this.useMock) {
+      return this.request(`/members/by-phone/${encodeURIComponent(phone)}`)
+    }
     const member = mockData.members.find((m) => m.phone === phone)
     return this.mockRequest(member)
   }
@@ -361,7 +463,10 @@ class ApiClient {
   }
 
   // 报表 API
-  async getSalesReport(_startDate: string, _endDate: string): Promise<ApiResponse<any>> {
+  async getSalesReport(startDate: string, endDate: string): Promise<ApiResponse<any>> {
+    if (!this.useMock) {
+      return this.request(`/reports/sales?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`)
+    }
     const mockReport = {
       totalSales: 15680.5,
       totalOrders: 45,
@@ -376,9 +481,12 @@ class ApiClient {
     return this.mockRequest(mockReport)
   }
 
-  async getRoomUtilizationReport(_startDate: string, _endDate: string): Promise<ApiResponse<any>> {
+  async getRoomUtilizationReport(startDate: string, endDate: string): Promise<ApiResponse<any>> {
+    if (!this.useMock) {
+      return this.request(`/reports/rooms?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`)
+    }
     return this.mockRequest({
-      totalRooms: mockData.rooms.length,
+      totalRooms: createPreviewRooms(PREVIEW_SESSION.currentStoreId).length,
       occupancyRate: 75.5,
       averageSessionDuration: 3.2,
     })
@@ -386,6 +494,9 @@ class ApiClient {
 
   // 系统设置 API
   async getSettings(): Promise<ApiResponse<any>> {
+    if (!this.useMock) {
+      return this.request("/settings")
+    }
     return this.mockRequest({
       storeName: "智慧商家KTV",
       currency: "CNY",
@@ -403,6 +514,8 @@ class ApiClient {
 }
 
 // 创建 API 客户端实例
-export const apiClient = new ApiClient(process.env.NEXT_PUBLIC_API_BASE_URL || "mock://localhost")
+export const apiClient = new ApiClient(runtimeConfig.apiBaseUrl, {
+  useMock: runtimeConfig.useMock,
+})
 
 export default ApiClient

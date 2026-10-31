@@ -1,0 +1,601 @@
+openapi: 3.1.0
+info:
+  title: YYC³ Club Ops API（门店作用域契约占位）
+  version: 0.3.0
+  description: |
+    多店 SaaS 契约占位层。当前仅定义前端与后端联调所需的最小契约，尚未实现服务端。
+
+    约束：
+    - 所有实体金额使用整数“分”（*Cents）。
+    - 所有门店相关路径都显式携带 storeId；服务端必须校验会话对该门店的访问权。
+    - 前端不得信任 URL/表单中的 storeId，必须以会话授权列表为准。
+    - 生产环境禁止 Mock；错误必须返回稳定 code，前端不得静默降级。
+servers:
+  - url: https://api.club.yyc3.top
+    description: 生产网关（待接入）
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: yyc3_session
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    StoreId:
+      name: storeId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 门店 ID，必须属于会话授权列表
+    RoomId:
+      name: roomId
+      in: path
+      required: true
+      schema:
+        type: string
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 目标用户 ID，必须属于同一租户
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+      description: 会话绑定 CSRF 同步令牌；由登录/会话/刷新响应返回，仅写操作需要
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+      description: 结账/支付类写操作必须幂等
+  schemas:
+    ApiEnvelope:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        data: {}
+        message:
+          type: string
+        error:
+          type: string
+        code:
+          type: string
+          description: 稳定错误码，如 forbidden_store / room_state_conflict
+          enum:
+            - unauthorized
+            - forbidden_store
+            - forbidden_role
+            - no_store
+            - invalid_session
+            - validation_error
+            - room_state_conflict
+            - idempotency_conflict
+            - not_found
+            - rate_limited
+            - csrf_invalid
+            - session_expired
+            - internal_error
+    Tenant:
+      type: object
+      required: [id, name, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [active, suspended]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Store:
+      type: object
+      required: [id, tenantId, code, name, timezone, currency, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        code:
+          type: string
+        name:
+          type: string
+        timezone:
+          type: string
+          example: Asia/Shanghai
+        currency:
+          type: string
+          enum: [CNY]
+        status:
+          type: string
+          enum: [active, suspended]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    User:
+      type: object
+      required: [id, tenantId, name, phone, role, storeIds, permissions, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+          enum: [admin, manager, cashier, waiter]
+        storeIds:
+          type: array
+          items:
+            type: string
+        permissions:
+          type: array
+          items:
+            type: string
+            enum:
+              - view_orders
+              - create_orders
+              - edit_orders
+              - delete_orders
+              - view_products
+              - create_products
+              - edit_products
+              - delete_products
+              - view_warehouse
+              - manage_warehouse
+              - view_reports
+              - export_reports
+              - view_members
+              - manage_members
+              - view_settings
+              - manage_settings
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Session:
+      type: object
+      required: [user, tenant, stores, currentStoreId, expiresAt]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        tenant:
+          $ref: '#/components/schemas/Tenant'
+        stores:
+          type: array
+          description: 会话唯一授权门店列表
+          items:
+            $ref: '#/components/schemas/Store'
+        currentStoreId:
+          type: string
+          description: 必须存在于 stores
+        expiresAt:
+          type: string
+          format: date-time
+        csrfToken:
+          type: string
+          description: 会话绑定的 CSRF 同步令牌（写操作需放入 X-CSRF-Token 头）
+    AuthAuditEvent:
+      type: string
+      enum: [login_success, login_failure, logout, session_refresh, force_logout]
+    AuthAuditEntry:
+      type: object
+      required: [id, event, createdAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: [string, 'null']
+          description: 登录失败且手机号不存在时为 null（仅平台侧可查）
+        userId:
+          type: [string, 'null']
+        actorId:
+          type: [string, 'null']
+          description: force_logout 的操作者；其余事件与 userId 一致
+        phone:
+          type: [string, 'null']
+        event:
+          $ref: '#/components/schemas/AuthAuditEvent'
+        ip:
+          type: [string, 'null']
+        userAgent:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+    RoomType:
+      type: string
+      enum: [small, medium, large, vip, luxury]
+    RoomStatus:
+      type: string
+      enum: [available, occupied, reserved, cleaning, maintenance]
+    Room:
+      type: object
+      required: [id, name, type, status, storeId, priceCents]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/RoomType'
+        status:
+          $ref: '#/components/schemas/RoomStatus'
+        storeId:
+          type: string
+        priceCents:
+          type: integer
+          minimum: 0
+          description: 每小时房价（分）
+        floor:
+          type: integer
+        capacity:
+          type: integer
+          minimum: 0
+    StartRoomRequest:
+      type: object
+      properties:
+        customerId:
+          type: string
+        packageId:
+          type: string
+    StartRoomResponse:
+      type: object
+      required: [orderId, room]
+      properties:
+        orderId:
+          type: string
+        room:
+          $ref: '#/components/schemas/Room'
+    CheckoutResponse:
+      type: object
+      required: [orderId, room, totalCents, billableHours]
+      properties:
+        orderId:
+          type: string
+        room:
+          $ref: '#/components/schemas/Room'
+        totalCents:
+          type: integer
+          minimum: 0
+        billableHours:
+          type: integer
+          minimum: 1
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+paths:
+  /auth/session:
+    get:
+      summary: 获取当前会话与门店上下文
+      responses:
+        '200':
+          description: 会话
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/Session'
+        '401':
+          description: 未认证
+  /auth/login:
+    post:
+      security: []
+      summary: 登录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          session:
+                            $ref: '#/components/schemas/Session'
+        '400':
+          description: 参数不合法（缺少账号/密码或超长）
+        '401':
+          description: 账号或密码错误
+        '429':
+          description: 登录限流（同一账号/IP 失败尝试超限）
+          headers:
+            Retry-After:
+              description: 建议等待的秒数
+              schema:
+                type: integer
+                minimum: 1
+  /auth/logout:
+    post:
+      summary: 登出并使会话失效
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: 已登出
+        '403':
+          description: CSRF 校验失败（csrf_invalid）
+  /auth/refresh:
+    post:
+      summary: 会话滑动续期（受绝对有效期上限约束）
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: 续期成功，返回新会话与 Cookie
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          session:
+                            $ref: '#/components/schemas/Session'
+        '401':
+          description: 会话已过期或超过绝对有效期（session_expired）
+        '403':
+          description: CSRF 校验失败（csrf_invalid）
+  /stores:
+    get:
+      summary: 当前账号可访问的门店
+      responses:
+        '200':
+          description: 门店列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Store'
+        '401':
+          description: 未认证
+  /stores/{storeId}/rooms:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+    get:
+      summary: 门店包厢列表
+      responses:
+        '200':
+          description: 包厢列表（服务端已按 storeId 过滤）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Room'
+        '403':
+          description: 无权访问该门店（forbidden_store）
+  /stores/{storeId}/rooms/{roomId}:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - $ref: '#/components/parameters/RoomId'
+    get:
+      summary: 包厢详情
+      responses:
+        '200':
+          description: 包厢
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/Room'
+        '404':
+          description: 包厢不存在
+  /stores/{storeId}/rooms/{roomId}/status:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/CsrfToken'
+    put:
+      summary: 更新包厢状态（仅服务端允许的迁移）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: '#/components/schemas/RoomStatus'
+      responses:
+        '200':
+          description: 更新成功
+        '409':
+          description: 非法状态迁移（room_state_conflict）
+  /stores/{storeId}/rooms/{roomId}/start:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/CsrfToken'
+    post:
+      summary: 开房并创建进行中订单
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRoomRequest'
+      responses:
+        '200':
+          description: 开房成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/StartRoomResponse'
+        '409':
+          description: 包厢已被占用（room_state_conflict）
+  /stores/{storeId}/rooms/{roomId}/checkout:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/CsrfToken'
+      - $ref: '#/components/parameters/IdempotencyKey'
+    post:
+      summary: 结账并进入待清洁
+      responses:
+        '200':
+          description: 结账成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/CheckoutResponse'
+        '409':
+          description: 重复结账（idempotency_conflict）
+  /stores/{storeId}/rooms/{roomId}/clean:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/CsrfToken'
+    post:
+      summary: 清台完成，包厢回到空闲
+      responses:
+        '200':
+          description: 清台成功
+        '409':
+          description: 当前状态不允许清台
+  /admin/auth-audit:
+    get:
+      summary: 查询本租户登录/会话审计（店长及以上）
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: 返回条数上限（按时间倒序）
+      responses:
+        '200':
+          description: 审计记录列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AuthAuditEntry'
+        '400':
+          description: limit 不合法（validation_error）
+        '401':
+          description: 未认证
+        '403':
+          description: 需要店长及以上权限（forbidden_role）
+  /admin/users/{userId}/force-logout:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+      - $ref: '#/components/parameters/CsrfToken'
+    post:
+      summary: 强制下线目标用户在租户内的全部有效会话（店长及以上）
+      responses:
+        '200':
+          description: 强制下线成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        type: object
+                        required: [userId, revokedSessions]
+                        properties:
+                          userId:
+                            type: string
+                          revokedSessions:
+                            type: integer
+                            minimum: 0
+        '401':
+          description: 未认证
+        '403':
+          description: CSRF 校验失败（csrf_invalid）或需要店长及以上权限（forbidden_role）
+        '404':
+          description: 目标账号不存在（not_found）
+  /health:
+    get:
+      security: []
+      summary: 健康检查
+      responses:
+        '200':
+          description: 正常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
