@@ -2,7 +2,7 @@
 file: 07-CMS实施排期与就绪门禁.md
 description: 按双向协同规范 01 §10 就绪门禁，给出 CMS PC 侧中央配置、门店运营数据接收/投影、纠正命令、事件日志与对账的 10 周实施排期
 author: AI Tutor <TraeCode>
-version: v1.1.0
+version: v1.1.1
 created: 2026-11-01
 updated: 2026-11-01
 status: plan
@@ -65,6 +65,9 @@ category: plan
 | W2.7 | 运营投影-艺人 | `operational_artist`、`operational_artist_rule` | 与现有艺人表衔接 |
 | W2.8 | 运营投影-设置/仓库/库存/设备 | `operational_settings`、`operational_warehouse`、`operational_inventory`、`operational_device`、`operational_vod`、`operational_movie`、`operational_rule` | 接收 App 数据（含 PC 手册设置 10 子模块） |
 | W2.9 | 接收日志/账单更正 | `sync_event_log`、`command_log`、`bill_adjustment` | 去重/顺序/命令状态/账单更正 |
+
+> **评审补充（2026-11-01，见 [`09-评审记录-PC模块命令映射.md`](./09-评审记录-PC模块命令映射.md)）**：
+> W2 建表按手册子模块拆批次，优先覆盖 **设置 10 + 艺人设置（13 表）→ 商品 9（12 表）→ 仓库 12（12 表）→ 报表 MVP 4 组/8 张（5 表）**；W2.3/W2.8 的聚合表需按该批次拆细（补 flavor / room_package / price / time_rule / supplier / stock_policy / device / vod / movie / artist_setting 等），否则命令边界与字段 owner 无法落地。
 
 **落点**：`lib/db/repositories/operational/*.ts`、`lib/db/repositories/central/*.ts`、`scripts/migrations/20261101_sync.sql`。
 
