@@ -1,10 +1,23 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import "../styles/globals.css"
 import AppLayout from "@/components/layout/app-layout"
 
 export const metadata: Metadata = {
-  title: "F-KTV POS 系统",
-  description: "KTV 前台收银与运维管理系统",
+  title: "YYC³ Club Ops · 多店 KTV 运营 SaaS",
+  description: "面向多门店 KTV 的前台收银、包厢运营与经营分析 SaaS（开发预览版，非生产环境）",
+  applicationName: "YYC³ Club Ops",
+  openGraph: {
+    title: "YYC³ Club Ops · 多店 KTV 运营 SaaS",
+    description: "多门店 KTV 前台收银、包厢运营与经营分析（开发预览版）",
+    type: "website",
+    locale: "zh_CN",
+  },
+}
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#020617",
 }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

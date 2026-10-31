@@ -1,19 +1,60 @@
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   success: boolean
   data?: T
   message?: string
   error?: string
+  /** 稳定的错误码，便于前端分支处理（如 forbidden_store / room_state_conflict） */
+  code?: string
+}
+
+export interface Tenant {
+  id: string
+  name: string
+  status: "active" | "suspended"
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Store {
+  id: string
+  tenantId: string
+  code: string
+  name: string
+  timezone: string
+  currency: "CNY"
+  status: "active" | "suspended"
+  createdAt: string
+  updatedAt: string
 }
 
 export interface User {
   id: string
+  tenantId: string
   name: string
   phone: string
   role: UserRole
-  storeId: string
+  /** 账号被授权的门店列表；服务端必须再次校验，前端不可信任传入值 */
+  storeIds: string[]
   permissions: Permission[]
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * 登录/会话上下文：门店作用域的唯一来源。
+ * 前端所有门店相关请求都必须从 Session 派生 storeId，禁止直接信任 URL/表单。
+ */
+export interface Session {
+  user: User
+  tenant: Tenant
+  stores: Store[]
+  currentStoreId: string
+  expiresAt: string
+  /**
+   * CSRF 同步令牌：仅真实 API 返回；前端通过 X-CSRF-Token 回传。
+   * Mock/预览模式不需要，保持可选以避免污染预览数据。
+   */
+  csrfToken?: string
 }
 
 export enum UserRole {
@@ -136,6 +177,10 @@ export interface Room {
   type: RoomType
   status: RoomStatus
   storeId: string
+  /** 金额统一使用“分”，避免浮点误差 */
+  priceCents: number
+  floor?: number
+  capacity?: number
 }
 
 export enum RoomType {

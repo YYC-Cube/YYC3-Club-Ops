@@ -1,39 +1,59 @@
 "use client"
 
+import { useEffect, useMemo, useState } from "react"
 import POSSystem from "@/components/pos/pos-system"
-import RoomDetailModal from "@/components/room/room-detail-modal"
+import RoomDetailModal, { type RoomAction } from "@/components/room/room-detail-modal"
 import RoomStatusDashboard from "@/components/room/room-status-dashboard"
-import { useOrderStore } from "@/lib/stores/useOrderStore"
+import { Button } from "@/components/ui/button"
 import { useRoomStore } from "@/lib/stores/useRoomStore"
-import { useEffect, useState } from "react"
+import { useStoreContextStore } from "@/lib/stores/useStoreContextStore"
+import type { Room } from "@/lib/types"
 
 export default function RoomsPage() {
-  const [selectedRoom, setSelectedRoom] = useState<any>(null)
-  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
   const [showPOS, setShowPOS] = useState(false)
   const [posRoomId, setPosRoomId] = useState<string | undefined>()
+  const [actionError, setActionError] = useState<string | null>(null)
 
-  const { rooms, fetchRooms, updateRoomStatus, startRoom, checkoutRoom } = useRoomStore()
-  const { fetchOrders } = useOrderStore()
+  const currentStore = useStoreContextStore((state) => state.currentStore)
+  const currentStoreId = useStoreContextStore((state) => state.currentStoreId)
+  const sessionStatus = useStoreContextStore((state) => state.status)
+  const sessionError = useStoreContextStore((state) => state.error)
+  const loadSession = useStoreContextStore((state) => state.loadSession)
+
+  const { rooms, loading, error: roomError, fetchRooms, startRoom, checkoutRoom, cleanRoom, setMaintenance, resumeRoom } =
+    useRoomStore()
 
   useEffect(() => {
-    fetchRooms()
-    fetchOrders()
-  }, [fetchRooms, fetchOrders])
+    if (!currentStoreId) return
+    // 错误由 store 记录；这里只阻止未处理的 Promise 拒绝。
+    void fetchRooms(currentStoreId).catch(() => {})
+  }, [currentStoreId, fetchRooms])
 
-  const handleRoomClick = (room: any) => {
-    setSelectedRoom(room)
-    setIsModalOpen(true)
+  useEffect(() => {
+    setSelectedRoomId(null)
+    setActionError(null)
+  }, [currentStoreId])
+
+  const selectedRoom = useMemo(
+    () => rooms.find((room) => room.id === selectedRoomId) ?? null,
+    [rooms, selectedRoomId],
+  )
+
+  const handleRoomClick = (room: Room) => {
+    setActionError(null)
+    setSelectedRoomId(room.id)
   }
 
   const handleCloseModal = () => {
-    setIsModalOpen(false)
-    setSelectedRoom(null)
+    setSelectedRoomId(null)
   }
 
-  const handleRoomAction = async (action: string) => {
+  const handleRoomAction = async (action: RoomAction) => {
     if (!selectedRoom) return
+
     try {
+      setActionError(null)
       switch (action) {
         case "start":
           await startRoom(selectedRoom.id)
@@ -42,19 +62,22 @@ export default function RoomsPage() {
           await checkoutRoom(selectedRoom.id)
           break
         case "clean":
-          await updateRoomStatus(selectedRoom.id, "cleaning")
+          await cleanRoom(selectedRoom.id)
+          break
+        case "maintenance":
+          await setMaintenance(selectedRoom.id)
+          break
+        case "resume":
+          await resumeRoom(selectedRoom.id)
           break
         case "order":
           setPosRoomId(selectedRoom.id)
           setShowPOS(true)
-          setIsModalOpen(false)
-          break
-        case "pause":
-          await updateRoomStatus(selectedRoom.id, "maintenance")
+          setSelectedRoomId(null)
           break
       }
     } catch (error) {
-      console.error(`操作失败: ${action}`, error)
+      setActionError(error instanceof Error ? error.message : "操作失败，请重试")
     }
   }
 
@@ -70,10 +93,53 @@ export default function RoomsPage() {
     )
   }
 
+  const errorMessage = actionError ?? roomError ?? (sessionStatus === "error" ? sessionError : null)
+
   return (
-    <div className="h-full">
-      <RoomStatusDashboard rooms={rooms} onRoomClick={handleRoomClick} />
-      <RoomDetailModal room={selectedRoom} isOpen={isModalOpen} onClose={handleCloseModal} onStart={handleRoomAction} onCheckout={handleRoomAction} />
+    <div className="h-full space-y-4 p-4 md:p-6">
+      <header className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-bold">包厢管理</h1>
+          <p className="mt-1 text-xs text-slate-400">
+            {currentStore ? `${currentStore.name} · 多店 SaaS 开发预览` : "多店 SaaS 开发预览 · 门店上下文加载中"}
+          </p>
+        </div>
+        <span className="text-xs text-slate-500">{loading ? "加载中..." : `共 ${rooms.length} 个包厢`}</span>
+      </header>
+
+      {errorMessage && (
+        <div role="alert" className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+          {errorMessage}
+        </div>
+      )}
+
+      {!currentStoreId && sessionStatus !== "error" ? (
+        <div className="rounded-md border border-slate-800 bg-slate-900/50 px-3 py-2 text-sm text-slate-400" role="status">
+          正在加载门店上下文...
+        </div>
+      ) : null}
+
+      {sessionStatus === "error" ? (
+        <Button
+          variant="outline"
+          onClick={() => {
+            void loadSession(undefined, { force: true }).catch(() => {})
+          }}
+        >
+          重试加载门店上下文
+        </Button>
+      ) : null}
+
+      {currentStoreId ? (
+        <RoomStatusDashboard rooms={rooms} onRoomClick={handleRoomClick} />
+      ) : null}
+
+      <RoomDetailModal
+        room={selectedRoom}
+        isOpen={selectedRoom !== null}
+        onClose={handleCloseModal}
+        onAction={handleRoomAction}
+      />
     </div>
   )
 }

@@ -5,8 +5,11 @@ import { motion } from "framer-motion"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Home, ShoppingBag, DollarSign, Users, Clock } from "lucide-react"
+import { formatCNY, toCents } from "@/lib/money"
+import { RoomStatus } from "@/lib/types"
 import { useRoomStore } from "@/lib/stores/useRoomStore"
 import { useOrderStore } from "@/lib/stores/useOrderStore"
+import { useStoreContextStore } from "@/lib/stores/useStoreContextStore"
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -14,33 +17,65 @@ const containerVariants = {
 }
 
 export default function AdminDashboard() {
+  const currentStore = useStoreContextStore((state) => state.currentStore)
+  const currentStoreId = useStoreContextStore((state) => state.currentStoreId)
   const { rooms, fetchRooms } = useRoomStore()
   const { orders, fetchOrders } = useOrderStore()
 
   useEffect(() => {
-    fetchRooms()
-    fetchOrders()
-  }, [fetchRooms, fetchOrders])
+    if (!currentStoreId) return
+    void fetchRooms(currentStoreId).catch(() => {})
+  }, [currentStoreId, fetchRooms])
+
+  useEffect(() => {
+    void fetchOrders()
+  }, [fetchOrders])
+
+  const hasOrderData = orders.length > 0
+  const todayRevenueCents = orders.reduce((sum, order) => sum + toCents(order.total), 0)
 
   const stats = {
     totalRooms: rooms.length,
-    availableRooms: rooms.filter((r) => r.status === "available").length,
-    occupiedRooms: rooms.filter((r) => r.status === "occupied").length,
+    availableRooms: rooms.filter((r) => r.status === RoomStatus.AVAILABLE).length,
+    occupiedRooms: rooms.filter((r) => r.status === RoomStatus.OCCUPIED).length,
     totalOrders: orders.length,
-    todayRevenue: orders.reduce((sum: number, order: any) => sum + (order.totalAmount || order.total || 0), 0),
+    todayRevenue: formatCNY(todayRevenueCents),
   }
 
   const statCards = [
-    { title: "包厢总数", value: stats.totalRooms, icon: Home, sub: `空闲 ${stats.availableRooms} | 占用 ${stats.occupiedRooms}` },
-    { title: "今日订单", value: stats.totalOrders, icon: ShoppingBag, sub: "较昨日" },
-    { title: "今日营收", value: `¥${stats.todayRevenue.toFixed(2)}`, icon: DollarSign, sub: "实时统计" },
-    { title: "会员数", value: 128, icon: Users, sub: "活跃会员" },
+    {
+      title: "包厢总数",
+      value: rooms.length > 0 ? stats.totalRooms : "—",
+      icon: Home,
+      sub: rooms.length > 0 ? `空闲 ${stats.availableRooms} | 占用 ${stats.occupiedRooms}` : "包厢数据未接入",
+    },
+    {
+      title: "今日订单",
+      value: hasOrderData ? stats.totalOrders : "—",
+      icon: ShoppingBag,
+      sub: hasOrderData ? "已接入订单数据" : "订单数据未接入",
+    },
+    {
+      title: "今日营收",
+      value: hasOrderData ? stats.todayRevenue : "—",
+      icon: DollarSign,
+      sub: hasOrderData ? "按已接入订单统计" : "订单数据未接入",
+    },
+    {
+      title: "会员数",
+      value: "—",
+      icon: Users,
+      sub: "会员数据未接入",
+    },
   ]
 
   return (
     <motion.div variants={containerVariants} initial="hidden" animate="visible" className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">经营看板</h1>
+        <div>
+          <h1 className="text-2xl font-bold">经营看板</h1>
+          <p className="mt-1 text-xs text-slate-400">{currentStore ? `${currentStore.name} · ${currentStore.timezone}` : "门店上下文加载中"}</p>
+        </div>
         <Badge variant="outline" className="text-xs">
           <Clock className="h-3 w-3 mr-1" />
           实时
