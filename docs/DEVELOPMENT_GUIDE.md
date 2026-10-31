@@ -1,5 +1,9 @@
 # 开发指南
 
+> 团队规范 SSOT：[`YYC3-团队通用-标规文档/`](./YYC3-团队通用-标规文档/)；设计规范：[`VISUALIZATION_INTERACTION.md`](./VISUALIZATION_INTERACTION.md)。
+>
+> 核心约定：**门店作用域唯一来源、写操作必带 CSRF、金额只用分、失败不静默降级。**
+
 ## 编码规范
 
 ### 文件命名
@@ -74,31 +78,95 @@ export default function PromotionsPage() {
 
 ## 状态管理（Zustand）
 
+当前约定：
+
+- 不使用 `persist` 持久化业务数据；服务端为唯一事实源（多店 SaaS）。
+- Store 只保存 UI 状态与短期缓存；写入失败必须回滚并向上抛出错误。
+- 所有请求必须携带会话中的门店上下文，禁止从 URL/表单直接信任 `storeId`。
+
 ```typescript
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
 
 interface FeatureState {
   items: Item[]
   loading: boolean
+  error: string | null
   fetchItems: () => Promise<void>
 }
 
-export const useFeatureStore = create<FeatureState>()(
-  persist(
-    (set) => ({
-      items: [],
-      loading: false,
-      fetchItems: async () => {
-        set({ loading: true })
-        const response = await apiClient.getItems()
-        set({ items: response.data, loading: false })
-      },
-    }),
-    { name: "feature-storage" }
-  )
-)
+export const useFeatureStore = create<FeatureState>((set) => ({
+  items: [],
+  loading: false,
+  error: null,
+  fetchItems: async () => {
+    set({ loading: true, error: null })
+    try {
+      const response = await apiClient.getItems()
+      set({ items: response.data ?? [], loading: false })
+    } catch (error) {
+      set({ loading: false, error: error instanceof Error ? error.message : "加载失败" })
+      throw error
+    }
+  },
+}))
 ```
+
+> 真实 API 已接入；鉴权、CSRF、门店作用域、错误码与续期由服务层统一处理。
+
+## 认证与写操作约定
+
+### 会话
+
+- `Session` 是门店上下文的唯一来源；禁止从 URL/表单直接信任 `storeId`。
+- 会话由 HttpOnly Cookie 管理，前端不保存 Token；CSRF 令牌只存内存。
+- 会话自动续期由 `AppLayout` 调度；续期失败进入 error 态，引导重新登录。
+
+### CSRF
+
+所有 `POST/PUT/PATCH/DELETE` 必须携带 `X-CSRF-Token`：
+
+```ts
+// 已由 apiClient 自动注入，业务代码无需手动设置
+fetch(url, { method: "POST", credentials: "include", headers: { "X-CSRF-Token": token } })
+```
+
+- 令牌来自登录/会话/续期响应；
+- 缺失或伪造返回 `403 csrf_invalid`；
+- 不要在 URL、日志或 localStorage 中出现令牌。
+
+### 服务端写操作顺序
+
+```text
+requireAuth → CSRF → 门店授权 → 参数校验 → 事务（set_config）→ RLS
+```
+
+新增写接口必须复用上述顺序，并提供幂等键（如结账）。
+
+### 错误码
+
+前端按 `code` 分支处理：`forbidden_store`、`csrf_invalid`、`rate_limited`、`room_state_conflict`、`session_expired`。禁止仅依赖 HTTP 状态码文案。
+
+## 测试要求
+
+| 变更 | 必须补的测试 |
+|---|---|
+| 业务逻辑/金额 | Vitest 单测 |
+| API/仓储 | 服务端集成（含 PostgreSQL，未配置时自动跳过） |
+| 门店/权限 | 跨店/越权用例 |
+| 路由/交互 | Playwright E2E |
+| 安全（CSRF/限流/会话） | 正反用例（缺失、伪造、超限、到期） |
+
+```bash
+pnpm typecheck && pnpm lint && pnpm test
+pnpm test:e2e
+```
+
+## 文档要求
+
+- API 变更 → `contracts/openapi.yaml` + `docs/API_REFERENCE.md`
+- 数据库变更 → `db/migrations/NNN_*.sql` + `docs/DATABASE_DESIGN.md`
+- 安全变更 → `SECURITY.md` + 阶段报告
+- UI/交互变更 → `docs/VISUALIZATION_INTERACTION.md` 的设计映射
 
 ## 样式
 

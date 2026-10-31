@@ -17,10 +17,46 @@ import "../styles/globals.css"
 
 ### Q: 如何切换 Mock/真实 API
 
-修改 `lib/api/client.ts` 中的构造函数参数或设置环境变量：
+通过环境变量显式控制（`.env.development` 默认开启，生产必须关闭）：
+
 ```bash
+# 本地无后端演示
+NEXT_PUBLIC_USE_MOCK=true pnpm dev
+
+# 接入真实网关
+NEXT_PUBLIC_USE_MOCK=false \
 NEXT_PUBLIC_API_BASE_URL=http://your-api-server/api pnpm dev
 ```
+
+接口失败会抛出 `ApiError` 并由页面提示，不会自动回退到 Mock。
+
+### Q: 写操作返回 403 `csrf_invalid`
+
+说明请求未携带或携带了错误的 `X-CSRF-Token`。
+
+1. 确认已通过 `/auth/session` 或登录获取会话；
+2. 前端应使用 `apiClient`（会自动注入）；
+3. 服务端自定义调用时需带 `X-CSRF-Token` 头；
+4. 令牌只存内存，不要写入 localStorage。
+
+### Q: 登录返回 429 `rate_limited`
+
+触发了 IP 或账号维度限流。响应头 `Retry-After` 为建议等待秒数。
+
+- 账号：默认 5 次失败 / 15 分钟，封禁 15 分钟；
+- IP：默认 60 次 / 5 分钟；
+- 可通过 `LOGIN_*` 环境变量调整；
+- 测试环境可清理 `app.login_throttle` 对应记录。
+
+### Q: 会话突然失效（401 `session_expired`）
+
+- 单次有效期（`SESSION_TTL_SECONDS`，默认 8 小时）已过；
+- 或达到绝对上限（`SESSION_MAX_LIFETIME_SECONDS`，默认 7 天）；
+- 前端会在到期前自动续期；若续期失败请重新登录。
+
+### Q: 为什么登录前不能直接查 `app.app_user`
+
+认证表启用 RLS，且登录前没有租户上下文；服务端通过 `app.auth_lookup(phone)`（SECURITY DEFINER）精确读取 1 行。直接查询返回 0 行是预期行为。
 
 ## 构建
 
