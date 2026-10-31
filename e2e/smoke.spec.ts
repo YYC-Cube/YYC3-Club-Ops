@@ -17,7 +17,7 @@ test.describe("路由冒烟", () => {
 })
 
 test.describe("包厢核心闭环", () => {
-  test("空闲包厢可完成开房 → 结账 → 清台", async ({ page }) => {
+  test("空闲包厢可完成开房 → POS 点单结账 → 清台", async ({ page }) => {
     await page.goto("/rooms", { waitUntil: "networkidle" })
 
     await page.getByRole("button", { name: /VIP-01/ }).click()
@@ -28,14 +28,29 @@ test.describe("包厢核心闭环", () => {
     await dialog.getByRole("button", { name: "开房" }).click()
     await expect(dialog).toContainText("消费中")
 
-    await dialog.getByRole("button", { name: "结账" }).click()
-    await expect(dialog).toContainText("待清洁")
+    // 结账必须经过 POS（含消费明细与支付方式）
+    await dialog.getByRole("button", { name: /结账/ }).click()
+    await expect(page.getByText("POS 收银台")).toBeVisible()
+    await expect(page.getByText("当前包厢：VIP-01")).toBeVisible()
 
-    await dialog.getByRole("button", { name: "清洁完成" }).click()
-    await expect(dialog).toContainText("空闲")
+    await page.getByRole("button", { name: /矿泉水/ }).click()
+    await expect(page.getByText("尚未点单")).toHaveCount(0)
+
+    await page.getByRole("button", { name: "结账并打印小票" }).click()
+    const receipt = page.getByRole("dialog")
+    await expect(receipt).toContainText("结账成功")
+    await expect(receipt).toContainText("矿泉水")
+    await receipt.getByRole("button", { name: "完成并返回" }).click()
+
+    // 返回包厢列表后为待清洁，清台后回到空闲
+    await page.getByRole("button", { name: /VIP-01/ }).click()
+    const roomDialog = page.getByRole("dialog")
+    await expect(roomDialog).toContainText("待清洁")
+    await roomDialog.getByRole("button", { name: "清洁完成" }).click()
+    await expect(roomDialog).toContainText("空闲")
 
     await page.keyboard.press("Escape")
-    await expect(dialog).toBeHidden()
+    await expect(roomDialog).toBeHidden()
   })
 
   test("消费中包厢可进入点单", async ({ page }) => {
@@ -45,8 +60,28 @@ test.describe("包厢核心闭环", () => {
     const dialog = page.getByRole("dialog")
     await dialog.getByRole("button", { name: "点单" }).click()
 
-    await expect(page.getByText("POS 收银系统")).toBeVisible()
-    await expect(page.getByText("房间: room-fs-vip-02")).toBeVisible()
+    await expect(page.getByText("POS 收银台")).toBeVisible()
+    await expect(page.getByText("当前包厢：VIP-02")).toBeVisible()
+    await expect(page.getByRole("button", { name: /矿泉水/ })).toBeVisible()
+  })
+
+  test("POS 页面可直接点单、退单并结账出小票", async ({ page }) => {
+    await page.goto("/pos", { waitUntil: "networkidle" })
+    await expect(page.getByText("POS 收银台")).toBeVisible()
+
+    await page.getByRole("button", { name: /百威啤酒/ }).click()
+    await expect(page.getByText("尚未点单")).toHaveCount(0)
+
+    await page.getByRole("button", { name: "退单" }).first().click()
+    await expect(page.getByText("尚未点单")).toBeVisible()
+
+    await page.getByRole("button", { name: /矿泉水/ }).click()
+    await page.getByRole("button", { name: "结账并打印小票" }).click()
+    const receipt = page.getByRole("dialog")
+    await expect(receipt).toContainText("结账成功")
+    await expect(receipt).toContainText("合计")
+    await receipt.getByRole("button", { name: "继续点单" }).click()
+    await expect(receipt).toBeHidden()
   })
 })
 

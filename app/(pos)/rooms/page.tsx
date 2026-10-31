@@ -21,7 +21,7 @@ export default function RoomsPage() {
   const sessionError = useStoreContextStore((state) => state.error)
   const loadSession = useStoreContextStore((state) => state.loadSession)
 
-  const { rooms, loading, error: roomError, fetchRooms, startRoom, checkoutRoom, cleanRoom, setMaintenance, resumeRoom } =
+  const { rooms, loading, error: roomError, fetchRooms, startRoom, cleanRoom, setMaintenance, resumeRoom } =
     useRoomStore()
 
   useEffect(() => {
@@ -59,7 +59,10 @@ export default function RoomsPage() {
           await startRoom(selectedRoom.id)
           break
         case "checkout":
-          await checkoutRoom(selectedRoom.id)
+          // 结账必须经过 POS（确认明细 + 支付方式 + 小票），避免直接跳过消费明细。
+          setPosRoomId(selectedRoom.id)
+          setShowPOS(true)
+          setSelectedRoomId(null)
           break
         case "clean":
           await cleanRoom(selectedRoom.id)

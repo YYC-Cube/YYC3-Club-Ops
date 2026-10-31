@@ -41,7 +41,7 @@ const ACTIONS_BY_STATUS: Record<RoomStatus, RoomActionOption[]> = {
   ],
   [RoomStatus.OCCUPIED]: [
     { action: "order", label: "点单", variant: "default" },
-    { action: "checkout", label: "结账", variant: "secondary" },
+    { action: "checkout", label: "结账（含明细）", variant: "secondary" },
   ],
   [RoomStatus.CLEANING]: [
     { action: "clean", label: "清洁完成", variant: "default" },
