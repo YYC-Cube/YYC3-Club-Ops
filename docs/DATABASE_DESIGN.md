@@ -104,6 +104,20 @@ tenant（租户/品牌）
 
 索引：`(tenant_id, created_at DESC)`、`(user_id, created_at DESC)`。
 
+### 2.8 `app.product` 与 `app.room_order_item`（`005`）
+
+POS 价目表与消费明细（金额整数分，`tenant + store` 强制 RLS）。
+
+| 表 | 关键字段 |
+|---|---|
+| `product` | `id`、`tenant_id`、`store_id`、`name`、`category`、`unit`、`price_cents`、`member_price_cents`、`cost_cents`、`stock >= 0`、`status(active/inactive)`；`UNIQUE(store_id, name)` |
+| `room_order_item` | `id uuid`、`order_id → room_order`、`product_id → product`（可空）、`name_snapshot`、`unit_price_cents`、`quantity > 0`、`total_cents`、`is_gift`、`created_by` |
+
+`room_order` 追加结账字段：`payment_method`（`cash/wechat/alipay/member_card/card`，可空）、`room_cents`、`items_cents`；
+`total_cents` 语义变为 **房费 + 商品**，幂等键仍为 `UNIQUE(store_id, idempotency_key)`。
+
+> 下单时写入 `name_snapshot` 与 `unit_price_cents`，后续改价不影响历史账单；库存扣减与明细写入在同一事务（`FOR UPDATE`）。
+
 ## 三、RLS 策略
 
 | 表 | RLS | 作用域 |
@@ -114,6 +128,7 @@ tenant（租户/品牌）
 | `session` | ENABLE + **FORCE** | `app.tenant_id` + `app.user_id`；过期行允许清理 |
 | `app_user` / `user_store` | ENABLE（不 FORCE） | `app.tenant_id`；登录前由 definer 函数读取 |
 | `auth_audit` | ENABLE + **FORCE** | SELECT 按 `app.tenant_id`；INSERT 用 `IS NOT DISTINCT FROM` 同时放行空租户与本人租户；**无 UPDATE/DELETE 策略** → 不可篡改 |
+| `product` / `room_order_item` | ENABLE + **FORCE** | `app.tenant_id` + `app.store_id` |
 
 作用域通过事务级 `set_config('app.tenant_id'/'app.store_id'/'app.user_id', ..., true)` 设置；未设置时查询返回 0 行。
 

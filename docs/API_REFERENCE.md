@@ -64,8 +64,20 @@ import { apiClient } from "@/lib/api/client"
 | POST | `/api/stores/{storeId}/rooms/{roomId}/checkout` | 是 | 结账（建议 `Idempotency-Key`） |
 | POST | `/api/stores/{storeId}/rooms/{roomId}/clean` | 是 | 清台 |
 | PUT | `/api/stores/{storeId}/rooms/{roomId}/status` | 是 | 维修/恢复 |
+| GET | `/api/stores/{storeId}/products` | 否 | 门店价目表（仅上架） |
+| GET | `/api/stores/{storeId}/rooms/{roomId}/bill` | 否 | 进行中账单（房费实时估算 + 明细） |
+| POST | `/api/stores/{storeId}/rooms/{roomId}/items` | 是 | 点单（校验并扣减库存） |
+| DELETE | `/api/stores/{storeId}/rooms/{roomId}/items/{itemId}` | 是 | 退单（回补库存） |
 | GET | `/api/admin/auth-audit?limit=` | 否 | 登录/会话审计（店长及以上，1–200 条倒序） |
 | POST | `/api/admin/users/{userId}/force-logout` | 是 | 强制下线目标用户全部会话（店长及以上） |
+
+### POS 点单与结账
+
+- 结账请求体可选 `{ paymentMethod }`：`cash | wechat | alipay | member_card | card`，缺省 `cash`；
+- 账单结构 `RoomBill`：`billableHours`、`roomCents`、`itemsCents`、`totalCents`、`items[]`；
+- `totalCents = roomCents + itemsCents`；结账返回 `CheckoutReceipt`（含 `room`、`paymentMethod`、`paidAt`）；
+- 幂等：携带 `Idempotency-Key`，重放返回首次账单与支付方式，不重复扣库存；
+- 错误：库存不足 `409 insufficient_stock`、商品不存在/跨店 `404 not_found`、数量越界 `400 validation_error`。
 
 ### 安全审计与强制下线
 
@@ -84,7 +96,7 @@ import { apiClient } from "@/lib/api/client"
 | 401 | `unauthorized` / `session_expired` | 未登录 / 会话过期 |
 | 403 | `forbidden_store` / `forbidden_role` / `csrf_invalid` / `no_store` | 越权 / 权限不足 / CSRF 失败 / 无门店 |
 | 404 | `not_found` | 资源不存在 |
-| 409 | `room_state_conflict` / `idempotency_conflict` | 状态冲突 / 幂等冲突 |
+| 409 | `room_state_conflict` / `idempotency_conflict` / `insufficient_stock` | 状态冲突 / 幂等冲突 / 库存不足 |
 | 429 | `rate_limited` | 登录限流（含 `Retry-After`） |
 
 完整契约见 `contracts/openapi.yaml`；本地运行 `pnpm api:dev`（3032）。

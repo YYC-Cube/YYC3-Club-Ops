@@ -209,7 +209,8 @@ db/migrations/
 ├── 001_init.sql            # 租户/门店/用户/会话/房间/订单/事件 + RLS
 ├── 002_auth_rls.sql        # 认证表 RLS + 登录限流
 ├── 003_session_csrf.sql    # 会话 CSRF Token
-└── 004_auth_audit.sql      # 登录/会话审计 + 强制下线函数
+├── 004_auth_audit.sql      # 登录/会话审计 + 强制下线函数
+└── 005_pos_items.sql       # POS 价目表 + 消费明细 + 结账字段
 ```
 
 ## 部署
