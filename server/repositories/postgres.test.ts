@@ -29,7 +29,7 @@ describe.skipIf(!enabled)("PostgresRepository integration", () => {
     try {
       await client.query("BEGIN")
       await client.query(
-        "TRUNCATE app.room_event, app.room_order, app.session, app.login_throttle, app.auth_audit RESTART IDENTITY",
+        "TRUNCATE app.room_event, app.room_order_item, app.room_order, app.product, app.session, app.login_throttle, app.auth_audit RESTART IDENTITY",
       )
       for (const store of [STORE_FLAGSHIP_ID, STORE_RIVER_ID]) {
         await client.query(
@@ -194,14 +194,20 @@ describe.skipIf(!enabled)("PostgresRepository integration", () => {
     expect(start.room.status).toBe(RoomStatus.OCCUPIED)
 
     const endedAt = new Date("2026-10-31T03:16:00.000Z")
-    const checkout = await repo.checkoutRoom(ctx, "room-fs-vip-01", "pg-key-1", endedAt)
+    const checkout = await repo.checkoutRoom(ctx, "room-fs-vip-01", "pg-key-1", endedAt, "cash")
     expect(checkout.room.status).toBe(RoomStatus.CLEANING)
     expect(checkout.billableHours).toBe(2)
+    expect(checkout.roomCents).toBe(58000 * 2)
+    expect(checkout.itemsCents).toBe(0)
     expect(checkout.totalCents).toBe(58000 * 2)
+    expect(checkout.paymentMethod).toBe("cash")
+    expect(checkout.orderNo).toMatch(/^RO/)
 
-    const repeated = await repo.checkoutRoom(ctx, "room-fs-vip-01", "pg-key-1", endedAt)
+    const repeated = await repo.checkoutRoom(ctx, "room-fs-vip-01", "pg-key-1", endedAt, "wechat")
     expect(repeated.orderId).toBe(checkout.orderId)
     expect(repeated.totalCents).toBe(checkout.totalCents)
+    // 幂等重放沿用首次支付方式，不被二次请求覆盖
+    expect(repeated.paymentMethod).toBe("cash")
 
     const cleaned = await repo.cleanRoom(ctx, "room-fs-vip-01")
     expect(cleaned.status).toBe(RoomStatus.AVAILABLE)
@@ -308,5 +314,114 @@ describe.skipIf(!enabled)("PostgresRepository integration", () => {
 
     // 幂等：再次撤销返回 0
     expect(await repo.revokeUserSessions(tenant, cashier!.id, "user-demo-manager")).toBe(0)
+  })
+
+  it("POS 闭环：点单扣库存 → 退单回补 → 结账合并房费与商品", async () => {
+    const ctx = {
+      tenantId: PREVIEW_TENANT.id,
+      storeId: STORE_FLAGSHIP_ID,
+      userId: "user-demo-manager",
+    }
+
+    const admin = await adminPool.connect()
+    try {
+      await admin.query("BEGIN")
+      await admin.query(
+        "SELECT set_config('app.tenant_id', $1, true), set_config('app.store_id', $2, true)",
+        [PREVIEW_TENANT.id, STORE_FLAGSHIP_ID],
+      )
+      await admin.query(
+        `INSERT INTO app.product (id, tenant_id, store_id, name, category, unit, price_cents, stock, status)
+         VALUES ('prod-pos-1', $1, $2, '百威啤酒', '酒水', '瓶', 1800, 50, 'active')`,
+        [PREVIEW_TENANT.id, STORE_FLAGSHIP_ID],
+      )
+      await admin.query("COMMIT")
+    } catch (error) {
+      await admin.query("ROLLBACK").catch(() => {})
+      throw error
+    } finally {
+      admin.release()
+    }
+
+    const products = await repo.listProducts(ctx)
+    expect(products.map((item) => item.id)).toContain("prod-pos-1")
+
+    const startedAt = new Date("2026-10-31T02:00:00.000Z")
+    await repo.startRoom(ctx, "room-fs-vip-01", startedAt)
+    const initialBill = await repo.getRoomBill(ctx, "room-fs-vip-01", startedAt)
+    expect(initialBill?.itemsCents).toBe(0)
+    expect(initialBill?.items).toHaveLength(0)
+
+    // 点单 2 瓶：账单 36.00，库存 50 → 48
+    const bill = await repo.addOrderItem(ctx, "room-fs-vip-01", { productId: "prod-pos-1", quantity: 2 }, startedAt)
+    expect(bill.itemsCents).toBe(3600)
+    expect(bill.items).toHaveLength(1)
+    expect(bill.totalCents).toBe(bill.roomCents + 3600)
+    expect((await repo.listProducts(ctx)).find((p) => p.id === "prod-pos-1")?.stock).toBe(48)
+
+    // 超量点单被拒（库存不足）
+    await expect(
+      repo.addOrderItem(ctx, "room-fs-vip-01", { productId: "prod-pos-1", quantity: 60 }, startedAt),
+    ).rejects.toThrow(/库存不足/)
+
+    // 退单：明细清空，库存回补
+    const afterRemove = await repo.removeOrderItem(
+      ctx,
+      "room-fs-vip-01",
+      bill.items[0].id,
+      startedAt,
+    )
+    expect(afterRemove.itemsCents).toBe(0)
+    expect((await repo.listProducts(ctx)).find((p) => p.id === "prod-pos-1")?.stock).toBe(50)
+
+    // 再点 1 瓶后结账（76 分钟 → 2 小时）：房费 116,000 + 商品 1,800
+    await repo.addOrderItem(ctx, "room-fs-vip-01", { productId: "prod-pos-1", quantity: 1 }, startedAt)
+    const endedAt = new Date("2026-10-31T03:16:00.000Z")
+    const receipt = await repo.checkoutRoom(ctx, "room-fs-vip-01", "pos-key-1", endedAt, "wechat")
+    expect(receipt.roomCents).toBe(58000 * 2)
+    expect(receipt.itemsCents).toBe(1800)
+    expect(receipt.totalCents).toBe(58000 * 2 + 1800)
+    expect(receipt.paymentMethod).toBe("wechat")
+    expect(receipt.items).toHaveLength(1)
+
+    // 结账后不再有进行中账单
+    expect(await repo.getRoomBill(ctx, "room-fs-vip-01", endedAt)).toBeNull()
+  })
+
+  it("点单 RLS：跨门店商品不可见、跨店加单被拒", async () => {
+    const ctx = {
+      tenantId: PREVIEW_TENANT.id,
+      storeId: STORE_FLAGSHIP_ID,
+      userId: "user-demo-manager",
+    }
+    const admin = await adminPool.connect()
+    try {
+      await admin.query("BEGIN")
+      await admin.query(
+        "SELECT set_config('app.tenant_id', $1, true), set_config('app.store_id', $2, true)",
+        [PREVIEW_TENANT.id, STORE_RIVER_ID],
+      )
+      await admin.query(
+        `INSERT INTO app.product (id, tenant_id, store_id, name, category, unit, price_cents, stock, status)
+         VALUES ('prod-river-1', $1, $2, '滨江专供果盘', '小食', '份', 6800, 20, 'active')`,
+        [PREVIEW_TENANT.id, STORE_RIVER_ID],
+      )
+      await admin.query("COMMIT")
+    } catch (error) {
+      await admin.query("ROLLBACK").catch(() => {})
+      throw error
+    } finally {
+      admin.release()
+    }
+
+    // 旗舰店看不到滨江店商品
+    const flagshipProducts = await repo.listProducts(ctx)
+    expect(flagshipProducts.some((item) => item.id === "prod-river-1")).toBe(false)
+
+    // 旗舰店开房后，用其他门店商品下单 → 404
+    await repo.startRoom(ctx, "room-fs-vip-01", new Date("2026-10-31T02:00:00.000Z"))
+    await expect(
+      repo.addOrderItem(ctx, "room-fs-vip-01", { productId: "prod-river-1", quantity: 1 }, new Date()),
+    ).rejects.toThrow(/不存在或已下架/)
   })
 })

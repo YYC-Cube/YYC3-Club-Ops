@@ -1,4 +1,13 @@
-import type { Room, RoomStatus, Store, Tenant } from "../lib/types"
+import type {
+  CheckoutReceipt,
+  PaymentMethod,
+  PosProduct,
+  Room,
+  RoomBill,
+  RoomStatus,
+  Store,
+  Tenant,
+} from "../lib/types"
 import type { ServerUser, SessionRecord } from "./domain"
 
 export interface StoreContext {
@@ -12,11 +21,13 @@ export interface StartRoomResult {
   orderId: string
 }
 
-export interface CheckoutRoomResult {
-  room: Room
-  orderId: string
-  totalCents: number
-  billableHours: number
+/** 结账结果即小票结构（房费 + 商品明细 + 支付方式） */
+export type CheckoutRoomResult = CheckoutReceipt
+
+/** 点单入参：数量 1-99，商品必须属于当前门店且为 active */
+export interface AddOrderItemInput {
+  productId: string
+  quantity: number
 }
 
 /** 登录/会话安全审计事件类型 */
@@ -88,9 +99,24 @@ export interface AppRepository {
     roomId: string,
     idempotencyKey: string | undefined,
     endedAt: Date,
+    paymentMethod: PaymentMethod,
   ): Promise<CheckoutRoomResult>
   cleanRoom(ctx: StoreContext, roomId: string): Promise<Room>
   updateRoomStatus(ctx: StoreContext, roomId: string, status: RoomStatus): Promise<Room>
+
+  /** 门店价目表（仅 active 商品） */
+  listProducts(ctx: StoreContext): Promise<PosProduct[]>
+  /** 进行中房间账单（房费按 asOf 实时估算，商品按明细累计）；无进行中订单返回 null */
+  getRoomBill(ctx: StoreContext, roomId: string, asOf: Date): Promise<RoomBill | null>
+  /** 点单：校验商品/库存，快照单价，扣减库存；返回最新账单 */
+  addOrderItem(
+    ctx: StoreContext,
+    roomId: string,
+    input: AddOrderItemInput,
+    at: Date,
+  ): Promise<RoomBill>
+  /** 退单：删除明细并回补库存；返回最新账单 */
+  removeOrderItem(ctx: StoreContext, roomId: string, itemId: string, at: Date): Promise<RoomBill>
 
   close(): Promise<void>
 }

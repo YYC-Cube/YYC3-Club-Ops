@@ -14,6 +14,10 @@ export const API_PATHS = {
   stores: "/stores",
   storeRooms: "/stores/{storeId}/rooms",
   storeRoom: "/stores/{storeId}/rooms/{roomId}",
+  storeProducts: "/stores/{storeId}/products",
+  roomBill: "/stores/{storeId}/rooms/{roomId}/bill",
+  roomItems: "/stores/{storeId}/rooms/{roomId}/items",
+  roomItem: "/stores/{storeId}/rooms/{roomId}/items/{itemId}",
   roomStatus: "/stores/{storeId}/rooms/{roomId}/status",
   startRoom: "/stores/{storeId}/rooms/{roomId}/start",
   checkoutRoom: "/stores/{storeId}/rooms/{roomId}/checkout",
@@ -42,6 +46,13 @@ export const apiRoutes = {
     `/stores/${encodeSegment(storeId, "storeId")}/rooms/${encodeSegment(roomId, "roomId")}`,
   roomStatus: (storeId: string, roomId: string) =>
     `/stores/${encodeSegment(storeId, "storeId")}/rooms/${encodeSegment(roomId, "roomId")}/status`,
+  products: (storeId: string) => `/stores/${encodeSegment(storeId, "storeId")}/products`,
+  roomBill: (storeId: string, roomId: string) =>
+    `/stores/${encodeSegment(storeId, "storeId")}/rooms/${encodeSegment(roomId, "roomId")}/bill`,
+  roomItems: (storeId: string, roomId: string) =>
+    `/stores/${encodeSegment(storeId, "storeId")}/rooms/${encodeSegment(roomId, "roomId")}/items`,
+  roomItem: (storeId: string, roomId: string, itemId: string) =>
+    `/stores/${encodeSegment(storeId, "storeId")}/rooms/${encodeSegment(roomId, "roomId")}/items/${encodeSegment(itemId, "itemId")}`,
   startRoom: (storeId: string, roomId: string) =>
     `/stores/${encodeSegment(storeId, "storeId")}/rooms/${encodeSegment(roomId, "roomId")}/start`,
   checkoutRoom: (storeId: string, roomId: string) =>

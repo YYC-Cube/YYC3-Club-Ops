@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: YYC³ Club Ops API（门店作用域契约占位）
-  version: 0.3.0
+  version: 0.4.0
   description: |
     多店 SaaS 契约占位层。当前仅定义前端与后端联调所需的最小契约，尚未实现服务端。
 
@@ -202,6 +202,104 @@ components:
     AuthAuditEvent:
       type: string
       enum: [login_success, login_failure, logout, session_refresh, force_logout]
+    PaymentMethod:
+      type: string
+      enum: [cash, wechat, alipay, member_card, card]
+    PosProduct:
+      type: object
+      required: [id, storeId, name, category, unit, priceCents, stock, status]
+      properties:
+        id:
+          type: string
+        storeId:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        unit:
+          type: string
+        priceCents:
+          type: integer
+          minimum: 0
+        memberPriceCents:
+          type: integer
+          minimum: 0
+        stock:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [active, inactive]
+    OrderBillItem:
+      type: object
+      required: [id, name, unitPriceCents, quantity, totalCents, isGift, createdAt]
+      properties:
+        id:
+          type: string
+        productId:
+          type: [string, 'null']
+        name:
+          type: string
+          description: 下单时的商品名称快照
+        unitPriceCents:
+          type: integer
+          minimum: 0
+        quantity:
+          type: integer
+          minimum: 1
+        totalCents:
+          type: integer
+          minimum: 0
+        isGift:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    RoomBill:
+      type: object
+      required: [roomId, orderId, orderNo, startedAt, billableHours, roomCents, itemsCents, totalCents, items]
+      properties:
+        roomId:
+          type: string
+        orderId:
+          type: string
+        orderNo:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        billableHours:
+          type: integer
+          minimum: 0
+        roomCents:
+          type: integer
+          minimum: 0
+          description: 房费，按 15 分钟进位规则实时估算
+        itemsCents:
+          type: integer
+          minimum: 0
+        totalCents:
+          type: integer
+          minimum: 0
+          description: 房费 + 商品合计
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderBillItem'
+    CheckoutReceipt:
+      allOf:
+        - $ref: '#/components/schemas/RoomBill'
+        - type: object
+          required: [room, paymentMethod, paidAt]
+          properties:
+            room:
+              $ref: '#/components/schemas/Room'
+            paymentMethod:
+              $ref: '#/components/schemas/PaymentMethod'
+            paidAt:
+              type: string
+              format: date-time
     AuthAuditEntry:
       type: object
       required: [id, event, createdAt]
@@ -271,20 +369,6 @@ components:
           type: string
         room:
           $ref: '#/components/schemas/Room'
-    CheckoutResponse:
-      type: object
-      required: [orderId, room, totalCents, billableHours]
-      properties:
-        orderId:
-          type: string
-        room:
-          $ref: '#/components/schemas/Room'
-        totalCents:
-          type: integer
-          minimum: 0
-        billableHours:
-          type: integer
-          minimum: 1
     Health:
       type: object
       required: [status]
@@ -468,6 +552,112 @@ paths:
           description: 更新成功
         '409':
           description: 非法状态迁移（room_state_conflict）
+  /stores/{storeId}/products:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+    get:
+      summary: 门店价目表（仅上架商品）
+      responses:
+        '200':
+          description: 商品列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PosProduct'
+        '401':
+          description: 未认证
+        '403':
+          description: 无权访问该门店（forbidden_store）
+  /stores/{storeId}/rooms/{roomId}/bill:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - $ref: '#/components/parameters/RoomId'
+    get:
+      summary: 进行中房间账单（房费实时估算 + 消费明细）
+      responses:
+        '200':
+          description: 账单
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/RoomBill'
+        '404':
+          description: 没有进行中的订单（not_found）
+  /stores/{storeId}/rooms/{roomId}/items:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/CsrfToken'
+    post:
+      summary: 点单（校验库存并扣减，快照单价）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId, quantity]
+              properties:
+                productId:
+                  type: string
+                quantity:
+                  type: integer
+                  minimum: 1
+                  maximum: 99
+      responses:
+        '200':
+          description: 最新账单
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/RoomBill'
+        '400':
+          description: 参数不合法（validation_error）
+        '404':
+          description: 商品不存在或已下架（not_found）
+        '409':
+          description: 包厢未开房（room_state_conflict）或库存不足（insufficient_stock）
+  /stores/{storeId}/rooms/{roomId}/items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - $ref: '#/components/parameters/RoomId'
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CsrfToken'
+    delete:
+      summary: 退单（删除明细并回补库存）
+      responses:
+        '200':
+          description: 最新账单
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/RoomBill'
+        '404':
+          description: 明细不存在（not_found）
+        '409':
+          description: 包厢没有进行中的订单（room_state_conflict）
   /stores/{storeId}/rooms/{roomId}/start:
     parameters:
       - $ref: '#/components/parameters/StoreId'
@@ -500,10 +690,20 @@ paths:
       - $ref: '#/components/parameters/CsrfToken'
       - $ref: '#/components/parameters/IdempotencyKey'
     post:
-      summary: 结账并进入待清洁
+      summary: 结账（房费 + 商品明细），返回小票并进入待清洁
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paymentMethod:
+                  $ref: '#/components/schemas/PaymentMethod'
+              description: 缺省为 cash
       responses:
         '200':
-          description: 结账成功
+          description: 结账成功，返回小票
           content:
             application/json:
               schema:
@@ -511,9 +711,11 @@ paths:
                   - $ref: '#/components/schemas/ApiEnvelope'
                   - properties:
                       data:
-                        $ref: '#/components/schemas/CheckoutResponse'
+                        $ref: '#/components/schemas/CheckoutReceipt'
+        '400':
+          description: 支付方式不合法（validation_error）
         '409':
-          description: 重复结账（idempotency_conflict）
+          description: 重复结账（idempotency_conflict）或状态冲突（room_state_conflict）
   /stores/{storeId}/rooms/{roomId}/clean:
     parameters:
       - $ref: '#/components/parameters/StoreId'

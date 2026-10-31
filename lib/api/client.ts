@@ -3,11 +3,16 @@ import type {
   ApiResponse,
   Session,
   User as Employee,
-  Room,
+  CheckoutReceipt,
+  OrderBillItem,
   Order,
   OrderItem,
+  PaymentMethod,
+  PosProduct,
   Product,
   Member,
+  Room,
+  RoomBill,
 } from "@/lib/types"
 import { RoomStatus } from "@/lib/types"
 import { apiRoutes, API_PATHS } from "@/lib/api/routes"
@@ -100,6 +105,47 @@ export class ApiError extends Error {
 
 /** 会话绑定的 CSRF 令牌：仅保存在内存，随登录/会话/刷新响应更新。 */
 let csrfToken: string | null = null
+
+/** Mock 模式的 POS 购物车（按 门店:包厢 归档），仅用于本地预览。 */
+const mockPosCart = new Map<string, OrderBillItem[]>()
+
+function mockProducts(storeId: string): PosProduct[] {
+  const base = [
+    { name: "矿泉水", category: "酒水", unit: "瓶", priceCents: 800, stock: 100 },
+    { name: "百威啤酒", category: "酒水", unit: "瓶", priceCents: 1800, stock: 80 },
+    { name: "果盘", category: "小食", unit: "份", priceCents: 6800, stock: 30 },
+    { name: "瓜子拼盘", category: "小食", unit: "份", priceCents: 2800, stock: 40 },
+  ]
+  return base.map((item, index) => ({
+    id: `${storeId}-prod-${index + 1}`,
+    storeId,
+    name: item.name,
+    category: item.category,
+    unit: item.unit,
+    priceCents: item.priceCents,
+    stock: item.stock,
+    status: "active" as const,
+  }))
+}
+
+function mockBill(storeId: string, roomId: string, asOf = new Date()): RoomBill {
+  const key = `${storeId}:${roomId}`
+  const items = mockPosCart.get(key) ?? []
+  const itemsCents = items.reduce((sum, item) => sum + item.totalCents, 0)
+  const room = createPreviewRooms(storeId).find((item) => item.id === roomId)
+  const roomCents = (room?.priceCents ?? 0) * 2
+  return {
+    roomId,
+    orderId: `order-${roomId}`,
+    orderNo: `RO${roomId}`,
+    startedAt: new Date(asOf.getTime() - 90 * 60_000).toISOString(),
+    billableHours: 2,
+    roomCents,
+    itemsCents,
+    totalCents: roomCents + itemsCents,
+    items,
+  }
+}
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
 
@@ -339,7 +385,8 @@ class ApiClient {
     storeId: string,
     roomId: string,
     idempotencyKey?: string,
-  ): Promise<ApiResponse<{ room: Room; orderId: string; totalCents: number; billableHours: number }>> {
+    paymentMethod: PaymentMethod = "cash",
+  ): Promise<ApiResponse<CheckoutReceipt>> {
     if (!this.useMock) {
       const headers: Record<string, string> = {}
       if (idempotencyKey) {
@@ -348,16 +395,79 @@ class ApiClient {
       return this.request(apiRoutes.checkoutRoom(storeId, roomId), {
         method: "POST",
         headers,
+        body: JSON.stringify({ paymentMethod }),
       })
     }
 
     const room = createPreviewRooms(storeId).find((item) => item.id === roomId)
-    return this.mockRequest({
-      room: room ? { ...room, status: RoomStatus.CLEANING } : null,
-      orderId: `order-${Date.now()}`,
-      totalCents: room?.priceCents ?? 0,
-      billableHours: 1,
-    } as { room: Room; orderId: string; totalCents: number; billableHours: number })
+    const bill = mockBill(storeId, roomId)
+    const receipt: CheckoutReceipt = {
+      ...bill,
+      room: room ? { ...room, status: RoomStatus.CLEANING } : ({} as Room),
+      paymentMethod,
+      paidAt: new Date().toISOString(),
+    }
+    mockPosCart.delete(`${storeId}:${roomId}`)
+    return this.mockRequest(receipt)
+  }
+
+  // POS 价目表与点单
+  async getProductsForStore(storeId: string): Promise<ApiResponse<PosProduct[]>> {
+    if (this.useMock) {
+      return this.mockRequest(mockProducts(storeId))
+    }
+    return this.request(apiRoutes.products(storeId))
+  }
+
+  async getRoomBill(storeId: string, roomId: string): Promise<ApiResponse<RoomBill>> {
+    if (this.useMock) {
+      return this.mockRequest(mockBill(storeId, roomId))
+    }
+    return this.request(apiRoutes.roomBill(storeId, roomId))
+  }
+
+  async addRoomItem(
+    storeId: string,
+    roomId: string,
+    productId: string,
+    quantity: number,
+  ): Promise<ApiResponse<RoomBill>> {
+    if (this.useMock) {
+      const product = mockProducts(storeId).find((item) => item.id === productId)
+      if (!product) throw new ApiError("商品不存在或已下架", 404, "not_found")
+      const key = `${storeId}:${roomId}`
+      const items = mockPosCart.get(key) ?? []
+      items.push({
+        id: `item-${items.length + 1}`,
+        productId,
+        name: product.name,
+        unitPriceCents: product.priceCents,
+        quantity,
+        totalCents: product.priceCents * quantity,
+        isGift: false,
+        createdAt: new Date().toISOString(),
+      })
+      mockPosCart.set(key, items)
+      return this.mockRequest(mockBill(storeId, roomId))
+    }
+    return this.request(apiRoutes.roomItems(storeId, roomId), {
+      method: "POST",
+      body: JSON.stringify({ productId, quantity }),
+    })
+  }
+
+  async removeRoomItem(
+    storeId: string,
+    roomId: string,
+    itemId: string,
+  ): Promise<ApiResponse<RoomBill>> {
+    if (this.useMock) {
+      const key = `${storeId}:${roomId}`
+      const items = (mockPosCart.get(key) ?? []).filter((item) => item.id !== itemId)
+      mockPosCart.set(key, items)
+      return this.mockRequest(mockBill(storeId, roomId))
+    }
+    return this.request(apiRoutes.roomItem(storeId, roomId, itemId), { method: "DELETE" })
   }
 
   async cleanRoom(storeId: string, roomId: string): Promise<ApiResponse<Room>> {

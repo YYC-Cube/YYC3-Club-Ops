@@ -378,6 +378,159 @@ describe("api/admin 审计与强制下线", () => {
   })
 })
 
+describe("api/pos 点单与结账闭环", () => {
+  const roomPath = `/api/stores/${STORE_FLAGSHIP_ID}/rooms/room-fs-vip-01`
+
+  it("价目表按门店返回，且点单后账单累计商品金额", async () => {
+    const { cookie, csrfToken } = await login()
+
+    const products = await app.request(`/api/stores/${STORE_FLAGSHIP_ID}/products`, {
+      headers: authHeaders(cookie),
+    })
+    expect(products.status).toBe(200)
+    const productsBody = (await products.json()) as { data: { id: string; stock: number }[] }
+    expect(productsBody.data.length).toBeGreaterThan(0)
+    expect(productsBody.data.every((item) => item.id.startsWith(STORE_FLAGSHIP_ID))).toBe(true)
+
+    // 未开房时点单 → 409
+    const beforeStart = await app.request(`${roomPath}/items`, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ productId: productsBody.data[1].id, quantity: 2 }),
+    })
+    expect(beforeStart.status).toBe(409)
+
+    await app.request(`${roomPath}/start`, { method: "POST", headers: authHeaders(cookie) })
+
+    const add = await app.request(`${roomPath}/items`, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ productId: productsBody.data[1].id, quantity: 2 }),
+    })
+    expect(add.status).toBe(200)
+    const addBody = (await add.json()) as {
+      data: {
+        itemsCents: number
+        roomCents: number
+        totalCents: number
+        items: { id: string; totalCents: number }[]
+      }
+    }
+    expect(addBody.data.items).toHaveLength(1)
+    // 百威啤酒 1800 分 × 2 = 3600 分
+    expect(addBody.data.itemsCents).toBe(3600)
+    expect(addBody.data.totalCents).toBe(addBody.data.itemsCents + addBody.data.roomCents)
+
+    // 账单接口返回同一笔消费
+    const bill = await app.request(`${roomPath}/bill`, { headers: authHeaders(cookie) })
+    expect(bill.status).toBe(200)
+    const billBody = (await bill.json()) as { data: { items: { id: string }[]; itemsCents: number } }
+    expect(billBody.data.items).toHaveLength(1)
+    expect(billBody.data.itemsCents).toBe(3600)
+
+    // 退单后金额归零
+    const remove = await app.request(`${roomPath}/items/${addBody.data.items[0].id}`, {
+      method: "DELETE",
+      headers: authHeaders(cookie, csrfToken),
+    })
+    expect(remove.status).toBe(200)
+    const removeBody = (await remove.json()) as { data: { items: unknown[]; itemsCents: number } }
+    expect(removeBody.data.items).toHaveLength(0)
+    expect(removeBody.data.itemsCents).toBe(0)
+  })
+
+  it("点单缺少 CSRF 返回 403，库存不足返回 409，商品不存在返回 404", async () => {
+    const { cookie, csrfToken } = await login()
+    await app.request(`${roomPath}/start`, { method: "POST", headers: authHeaders(cookie) })
+
+    const noCsrf = await app.request(`${roomPath}/items`, {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ productId: `${STORE_FLAGSHIP_ID}-prod-1`, quantity: 1 }),
+    })
+    expect(noCsrf.status).toBe(403)
+
+    const tooMany = await app.request(`${roomPath}/items`, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      // 洋酒套餐库存 10，99 份必然超限
+      body: JSON.stringify({ productId: `${STORE_FLAGSHIP_ID}-prod-3`, quantity: 99 }),
+    })
+    expect(tooMany.status).toBe(409)
+    expect(((await tooMany.json()) as { code: string }).code).toBe("insufficient_stock")
+
+    // 其他门店商品不可用（跨店防御）
+    const crossStore = await app.request(`${roomPath}/items`, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ productId: `${STORE_RIVER_ID}-prod-1`, quantity: 1 }),
+    })
+    expect(crossStore.status).toBe(404)
+    expect(((await crossStore.json()) as { code: string }).code).toBe("not_found")
+
+    const invalidQty = await app.request(`${roomPath}/items`, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ productId: `${STORE_FLAGSHIP_ID}-prod-1`, quantity: 0 }),
+    })
+    expect(invalidQty.status).toBe(400)
+  })
+
+  it("结账合并房费与商品并返回小票；支付方式非法返回 400", async () => {
+    const { cookie, csrfToken } = await login()
+    await app.request(`${roomPath}/start`, { method: "POST", headers: authHeaders(cookie) })
+    await app.request(`${roomPath}/items`, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ productId: `${STORE_FLAGSHIP_ID}-prod-1`, quantity: 3 }),
+    })
+
+    currentTime = new Date("2026-10-31T03:16:00.000Z") // 76 分钟 → 2 小时
+
+    const receipt = await app.request(`${roomPath}/checkout`, {
+      method: "POST",
+      headers: { ...authHeaders(cookie, csrfToken), "Idempotency-Key": "pos-key-1" },
+      body: JSON.stringify({ paymentMethod: "wechat" }),
+    })
+    expect(receipt.status).toBe(200)
+    const receiptBody = (await receipt.json()) as {
+      data: {
+        roomCents: number
+        itemsCents: number
+        totalCents: number
+        paymentMethod: string
+        billableHours: number
+        items: unknown[]
+        room: { status: string }
+        orderNo: string
+      }
+    }
+    expect(receiptBody.data.roomCents).toBe(58000 * 2)
+    expect(receiptBody.data.itemsCents).toBe(800 * 3)
+    expect(receiptBody.data.totalCents).toBe(58000 * 2 + 800 * 3)
+    expect(receiptBody.data.paymentMethod).toBe("wechat")
+    expect(receiptBody.data.billableHours).toBe(2)
+    expect(receiptBody.data.items).toHaveLength(1)
+    expect(receiptBody.data.room.status).toBe("cleaning")
+    expect(receiptBody.data.orderNo).toMatch(/^RO/)
+
+    // 结账后账单接口返回 404（无进行中订单）
+    const afterCheckout = await app.request(`${roomPath}/bill`, { headers: authHeaders(cookie) })
+    expect(afterCheckout.status).toBe(404)
+
+    // 非法支付方式
+    const otherRoom = `/api/stores/${STORE_FLAGSHIP_ID}/rooms/room-fs-std-01`
+    await app.request(`${otherRoom}/start`, { method: "POST", headers: authHeaders(cookie) })
+    const badMethod = await app.request(`${otherRoom}/checkout`, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ paymentMethod: "bitcoin" }),
+    })
+    expect(badMethod.status).toBe(400)
+    expect(((await badMethod.json()) as { code: string }).code).toBe("validation_error")
+  })
+})
+
 describe("api/stores", () => {
   it("返回会话授权的门店", async () => {
     const { cookie } = await login()

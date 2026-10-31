@@ -1,6 +1,7 @@
 import { Pool } from "pg"
 import { PREVIEW_STORES, PREVIEW_TENANT, createPreviewRooms } from "../../lib/mocks/preview-session"
 import { createSeedUsers } from "../domain"
+import { createSeedProducts } from "../repositories/memory"
 import { isTestMode, loadLocalEnv, resolveDatabaseUrl } from "../env"
 
 export async function seedDatabase(
@@ -95,6 +96,29 @@ export async function seedDatabase(
             room.priceCents,
             room.floor ?? null,
             room.capacity ?? null,
+          ],
+        )
+      }
+
+      for (const product of createSeedProducts(store.id)) {
+        await client.query(
+          `INSERT INTO app.product
+             (id, tenant_id, store_id, name, category, unit, price_cents, member_price_cents,
+              cost_cents, stock, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            product.id,
+            PREVIEW_TENANT.id,
+            store.id,
+            product.name,
+            product.category,
+            product.unit,
+            product.priceCents,
+            product.memberPriceCents ?? null,
+            null,
+            product.stock,
+            product.status,
           ],
         )
       }

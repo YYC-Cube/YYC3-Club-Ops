@@ -5,7 +5,7 @@ import type { Context } from "hono"
 import { cors } from "hono/cors"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import type { StatusCode } from "hono/utils/http-status"
-import { RoomStatus, UserRole, type Session } from "../lib/types"
+import { RoomStatus, UserRole, type PaymentMethod, type Session } from "../lib/types"
 import {
   ApiException,
   assertSessionStore,
@@ -64,7 +64,18 @@ interface StatusBody {
   status?: unknown
 }
 
+interface CheckoutBody {
+  paymentMethod?: unknown
+}
+
+interface AddItemBody {
+  productId?: unknown
+  quantity?: unknown
+}
+
 const ROOM_STATUSES = new Set<string>(Object.values(RoomStatus))
+
+const PAYMENT_METHODS = new Set<PaymentMethod>(["cash", "wechat", "alipay", "member_card", "card"])
 
 function jsonError(c: Context<AppEnv>, error: ApiException) {
   c.status(error.status as StatusCode)
@@ -74,6 +85,22 @@ function jsonError(c: Context<AppEnv>, error: ApiException) {
 async function readJson<T>(c: Context<AppEnv>): Promise<T> {
   try {
     return (await c.req.json()) as T
+  } catch {
+    throw new ApiException("请求体不是合法 JSON", 400, "validation_error")
+  }
+}
+
+/** 可选请求体：空体返回 null，非法 JSON 仍按 400 处理。 */
+async function readOptionalJson<T>(c: Context<AppEnv>): Promise<T | null> {
+  let raw = ""
+  try {
+    raw = await c.req.text()
+  } catch {
+    throw new ApiException("请求体不是合法 JSON", 400, "validation_error")
+  }
+  if (!raw.trim()) return null
+  try {
+    return JSON.parse(raw) as T
   } catch {
     throw new ApiException("请求体不是合法 JSON", 400, "validation_error")
   }
@@ -185,7 +212,7 @@ export function createApp(options: CreateAppOptions) {
     "*",
     cors({
       origin: appOrigin,
-      allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       allowHeaders: ["Content-Type", "Idempotency-Key", "X-CSRF-Token"],
       credentials: true,
     }),
@@ -484,19 +511,99 @@ export function createApp(options: CreateAppOptions) {
     return c.json({ success: true, data: result })
   })
 
+  app.get("/api/stores/:storeId/products", requireAuth, async (c) => {
+    const storeId = requireParam(c, "storeId")
+    const session = c.get("session")
+    assertSessionStore(session, storeId)
+    const products = await repository.listProducts(storeContext(session, storeId))
+    return c.json({ success: true, data: products })
+  })
+
+  app.get("/api/stores/:storeId/rooms/:roomId/bill", requireAuth, async (c) => {
+    const storeId = requireParam(c, "storeId")
+    const roomId = requireParam(c, "roomId")
+    const session = c.get("session")
+    assertSessionStore(session, storeId)
+    const bill = await repository.getRoomBill(
+      storeContext(session, storeId),
+      roomId,
+      now(),
+    )
+    if (!bill) {
+      throw new ApiException("该包厢没有进行中的订单", 404, "not_found")
+    }
+    return c.json({ success: true, data: bill })
+  })
+
+  app.post("/api/stores/:storeId/rooms/:roomId/items", requireAuth, async (c) => {
+    const storeId = requireParam(c, "storeId")
+    const roomId = requireParam(c, "roomId")
+    const session = c.get("session")
+    assertSessionStore(session, storeId)
+
+    const body = await readJson<AddItemBody>(c)
+    const productId = typeof body.productId === "string" ? body.productId.trim() : ""
+    const quantity = typeof body.quantity === "number" ? body.quantity : Number.NaN
+    if (!productId) {
+      throw new ApiException("缺少商品 ID", 400, "validation_error")
+    }
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+      throw new ApiException("数量必须是 1-99 的整数", 400, "validation_error")
+    }
+
+    const bill = await repository.addOrderItem(
+      storeContext(session, storeId),
+      roomId,
+      { productId, quantity },
+      now(),
+    )
+    return c.json({ success: true, data: bill })
+  })
+
+  app.delete("/api/stores/:storeId/rooms/:roomId/items/:itemId", requireAuth, async (c) => {
+    const storeId = requireParam(c, "storeId")
+    const roomId = requireParam(c, "roomId")
+    const itemId = requireParam(c, "itemId")
+    const session = c.get("session")
+    assertSessionStore(session, storeId)
+
+    const bill = await repository.removeOrderItem(
+      storeContext(session, storeId),
+      roomId,
+      itemId,
+      now(),
+    )
+    return c.json({ success: true, data: bill })
+  })
+
   app.post("/api/stores/:storeId/rooms/:roomId/checkout", requireAuth, async (c) => {
     const storeId = requireParam(c, "storeId")
     const roomId = requireParam(c, "roomId")
     const session = c.get("session")
     assertSessionStore(session, storeId)
+
+    const body = await readOptionalJson<CheckoutBody>(c)
+    const rawMethod = body?.paymentMethod
+    const paymentMethod: PaymentMethod =
+      rawMethod === undefined || rawMethod === null || rawMethod === ""
+        ? "cash"
+        : (rawMethod as PaymentMethod)
+    if (typeof rawMethod !== "undefined" && typeof rawMethod !== "string") {
+      throw new ApiException("支付方式不合法", 400, "validation_error")
+    }
+    if (typeof rawMethod === "string" && !PAYMENT_METHODS.has(paymentMethod)) {
+      throw new ApiException("支付方式不合法", 400, "validation_error")
+    }
+
     const idempotencyKey = c.req.header("Idempotency-Key")?.trim() || undefined
-    const result = await repository.checkoutRoom(
+    const receipt = await repository.checkoutRoom(
       storeContext(session, storeId),
       roomId,
       idempotencyKey,
       now(),
+      paymentMethod,
     )
-    return c.json({ success: true, data: result })
+    return c.json({ success: true, data: receipt })
   })
 
   app.post("/api/stores/:storeId/rooms/:roomId/clean", requireAuth, async (c) => {

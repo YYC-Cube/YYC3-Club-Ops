@@ -20,6 +20,10 @@ describe("api/routes", () => {
     expect(apiRoutes.startRoom("s1", "r1")).toBe("/stores/s1/rooms/r1/start")
     expect(apiRoutes.checkoutRoom("s1", "r1")).toBe("/stores/s1/rooms/r1/checkout")
     expect(apiRoutes.cleanRoom("s1", "r1")).toBe("/stores/s1/rooms/r1/clean")
+    expect(apiRoutes.products("s1")).toBe("/stores/s1/products")
+    expect(apiRoutes.roomBill("s1", "r1")).toBe("/stores/s1/rooms/r1/bill")
+    expect(apiRoutes.roomItems("s1", "r1")).toBe("/stores/s1/rooms/r1/items")
+    expect(apiRoutes.roomItem("s1", "r1", "item-1")).toBe("/stores/s1/rooms/r1/items/item-1")
   })
 
   it("拒绝空门店/包厢参数", () => {

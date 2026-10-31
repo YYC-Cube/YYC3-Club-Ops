@@ -183,6 +183,54 @@ export interface Room {
   capacity?: number
 }
 
+/** 支付方式（与 app.room_order.payment_method 约束一致） */
+export type PaymentMethod = "cash" | "wechat" | "alipay" | "member_card" | "card"
+
+/** POS 价目表商品（门店作用域，金额为整数分） */
+export interface PosProduct {
+  id: string
+  storeId: string
+  name: string
+  category: string
+  unit: string
+  priceCents: number
+  memberPriceCents?: number
+  stock: number
+  status: "active" | "inactive"
+}
+
+/** 房间订单消费明细（下单时快照名称与单价） */
+export interface OrderBillItem {
+  id: string
+  productId?: string
+  name: string
+  unitPriceCents: number
+  quantity: number
+  totalCents: number
+  isGift: boolean
+  createdAt: string
+}
+
+/** 进行中房间账单：房费按当前时刻实时估算 */
+export interface RoomBill {
+  roomId: string
+  orderId: string
+  orderNo: string
+  startedAt: string
+  billableHours: number
+  roomCents: number
+  itemsCents: number
+  totalCents: number
+  items: OrderBillItem[]
+}
+
+/** 结账小票 */
+export interface CheckoutReceipt extends RoomBill {
+  room: Room
+  paymentMethod: PaymentMethod
+  paidAt: string
+}
+
 export enum RoomType {
   SMALL = "small",
   MEDIUM = "medium",

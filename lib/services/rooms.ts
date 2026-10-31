@@ -1,5 +1,5 @@
 import { apiClient, ApiError } from "@/lib/api/client"
-import type { Room, RoomStatus } from "@/lib/types"
+import type { CheckoutReceipt, PaymentMethod, Room, RoomStatus } from "@/lib/types"
 import { StoreScopeError, assertEntityStore } from "@/lib/services/store-scope"
 
 function assertRoomResult(storeId: string, room: Room | undefined): Room {
@@ -44,16 +44,16 @@ export async function checkoutRoomForStore(
   storeId: string,
   roomId: string,
   idempotencyKey?: string,
-): Promise<{ room: Room; orderId: string; totalCents: number; billableHours: number }> {
+  paymentMethod: PaymentMethod = "cash",
+): Promise<CheckoutReceipt> {
   const key = idempotencyKey ?? `${storeId}:${roomId}:${crypto.randomUUID()}`
-  const response = await apiClient.checkoutRoom(storeId, roomId, key)
+  const response = await apiClient.checkoutRoom(storeId, roomId, key, paymentMethod)
   const room = assertRoomResult(storeId, response.data?.room)
-  return {
-    room,
-    orderId: response.data?.orderId ?? "",
-    totalCents: response.data?.totalCents ?? 0,
-    billableHours: response.data?.billableHours ?? 0,
+  const receipt = response.data
+  if (!receipt) {
+    throw new ApiError("接口未返回结账小票", 0, "invalid_response")
   }
+  return { ...receipt, room }
 }
 
 export async function cleanRoomForStore(storeId: string, roomId: string): Promise<Room> {

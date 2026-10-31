@@ -91,17 +91,33 @@ describe("rooms-service/开房与结账", () => {
     await expect(startRoomForStore(STORE_FLAGSHIP_ID, foreign.id)).rejects.toThrow("跨门店")
   })
 
-  it("结账返回计费结果并透传幂等键", async () => {
+  it("结账返回计费结果并透传幂等键与支付方式", async () => {
     const room = { ...createPreviewRooms(STORE_FLAGSHIP_ID)[1], status: RoomStatus.CLEANING }
     mocks.checkoutRoom.mockResolvedValue({
       success: true,
-      data: { room, orderId: "order-2", totalCents: 116000, billableHours: 2 },
+      data: {
+        roomId: room.id,
+        orderId: "order-2",
+        orderNo: "RO1750000000000",
+        startedAt: "2026-10-31T02:00:00.000Z",
+        billableHours: 2,
+        roomCents: 116000,
+        itemsCents: 5400,
+        totalCents: 121400,
+        items: [],
+        room,
+        paymentMethod: "wechat",
+        paidAt: "2026-10-31T03:16:00.000Z",
+      },
     })
 
-    const result = await checkoutRoomForStore(STORE_FLAGSHIP_ID, room.id, "key-1")
-    expect(result.totalCents).toBe(116000)
+    const result = await checkoutRoomForStore(STORE_FLAGSHIP_ID, room.id, "key-1", "wechat")
+    expect(result.totalCents).toBe(121400)
+    expect(result.roomCents).toBe(116000)
+    expect(result.itemsCents).toBe(5400)
     expect(result.billableHours).toBe(2)
-    expect(mocks.checkoutRoom).toHaveBeenCalledWith(STORE_FLAGSHIP_ID, room.id, "key-1")
+    expect(result.paymentMethod).toBe("wechat")
+    expect(mocks.checkoutRoom).toHaveBeenCalledWith(STORE_FLAGSHIP_ID, room.id, "key-1", "wechat")
   })
 
   it("清台与状态更新返回包厢", async () => {

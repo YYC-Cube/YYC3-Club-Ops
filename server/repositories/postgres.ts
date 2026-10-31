@@ -5,8 +5,12 @@ import { calculateBillableHours, calculateRoomChargeCents } from "../../lib/pric
 import {
   RoomStatus,
   RoomType,
+  type OrderBillItem,
+  type PaymentMethod,
   type Permission,
+  type PosProduct,
   type Room,
+  type RoomBill,
   type Store,
   type Tenant,
   type UserRole,
@@ -96,14 +100,40 @@ interface AuthAuditRow extends QueryResultRow {
 
 interface OrderRow extends QueryResultRow {
   id: string
+  order_no: string
   room_id: string
   store_id: string
   total_cents: number | null
   billable_hours: number | null
   hourly_rate_cents: number
   started_at: Date | string
+  ended_at: Date | string | null
   status: string
   idempotency_key: string | null
+  payment_method: string | null
+}
+
+interface ProductRow extends QueryResultRow {
+  id: string
+  store_id: string
+  name: string
+  category: string
+  unit: string
+  price_cents: number
+  member_price_cents: number | null
+  stock: number
+  status: string
+}
+
+interface OrderItemRow extends QueryResultRow {
+  id: string
+  product_id: string | null
+  name_snapshot: string
+  unit_price_cents: number
+  quantity: number
+  total_cents: number
+  is_gift: boolean
+  created_at: Date | string
 }
 
 function iso(value: Date | string): string {
@@ -173,6 +203,33 @@ function mapAuthAudit(row: AuthAuditRow): AuthAuditEntry {
     event: row.event as AuthAuditEvent,
     ip: row.ip,
     userAgent: row.user_agent,
+    createdAt: iso(row.created_at),
+  }
+}
+
+function mapProduct(row: ProductRow): PosProduct {
+  return {
+    id: row.id,
+    storeId: row.store_id,
+    name: row.name,
+    category: row.category,
+    unit: row.unit,
+    priceCents: row.price_cents,
+    memberPriceCents: row.member_price_cents ?? undefined,
+    stock: row.stock,
+    status: row.status as PosProduct["status"],
+  }
+}
+
+function mapOrderItem(row: OrderItemRow): OrderBillItem {
+  return {
+    id: row.id,
+    productId: row.product_id ?? undefined,
+    name: row.name_snapshot,
+    unitPriceCents: row.unit_price_cents,
+    quantity: row.quantity,
+    totalCents: row.total_cents,
+    isGift: row.is_gift,
     createdAt: iso(row.created_at),
   }
 }
@@ -490,11 +547,228 @@ export class PostgresRepository implements AppRepository {
     })
   }
 
+  /**
+   * 账单组装：房费按 asOf 实时估算（结账时为 ended_at），商品按明细累计。
+   * 所有查询都在调用方事务内完成，沿用 RLS 门店作用域。
+   */
+  private async loadBill(
+    client: PoolClient,
+    room: Room,
+    order: OrderRow,
+    asOf: Date,
+  ): Promise<RoomBill> {
+    const itemsResult = await client.query<OrderItemRow>(
+      `SELECT id, product_id, name_snapshot, unit_price_cents, quantity, total_cents, is_gift, created_at
+         FROM app.room_order_item
+        WHERE order_id = $1
+        ORDER BY created_at, id`,
+      [order.id],
+    )
+    const items = itemsResult.rows.map(mapOrderItem)
+    const itemsCents = items.reduce((sum, item) => sum + item.totalCents, 0)
+    const billableHours = calculateBillableHours(iso(order.started_at), asOf.toISOString())
+    const roomCents = calculateRoomChargeCents(order.hourly_rate_cents, billableHours)
+    return {
+      roomId: room.id,
+      orderId: order.id,
+      orderNo: order.order_no,
+      startedAt: iso(order.started_at),
+      billableHours,
+      roomCents,
+      itemsCents,
+      totalCents: roomCents + itemsCents,
+      items,
+    }
+  }
+
+  private async findActiveOrder(
+    client: PoolClient,
+    storeId: string,
+    roomId: string,
+    forUpdate: boolean,
+  ): Promise<OrderRow | null> {
+    const result = await client.query<OrderRow>(
+      `SELECT * FROM app.room_order
+        WHERE store_id = $1 AND room_id = $2 AND status = 'active'
+        ORDER BY started_at DESC
+        LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+      [storeId, roomId],
+    )
+    return result.rows[0] ?? null
+  }
+
+  async listProducts(ctx: StoreContext): Promise<PosProduct[]> {
+    return this.withStore(ctx, async (client) => {
+      const result = await client.query<ProductRow>(
+        `SELECT id, store_id, name, category, unit, price_cents, member_price_cents, stock, status
+           FROM app.product
+          WHERE store_id = $1 AND status = 'active'
+          ORDER BY category, name`,
+        [ctx.storeId],
+      )
+      return result.rows.map(mapProduct)
+    })
+  }
+
+  async getRoomBill(ctx: StoreContext, roomId: string, asOf: Date): Promise<RoomBill | null> {
+    return this.withStore(ctx, async (client) => {
+      const roomResult = await client.query<RoomRow>(
+        `SELECT id, store_id, name, type, status, price_cents, floor, capacity
+           FROM app.room WHERE store_id = $1 AND id = $2`,
+        [ctx.storeId, roomId],
+      )
+      const row = roomResult.rows[0]
+      if (!row) throw roomNotFound(roomId)
+      const order = await this.findActiveOrder(client, ctx.storeId, roomId, false)
+      if (!order) return null
+      return this.loadBill(client, mapRoom(row), order, asOf)
+    })
+  }
+
+  async addOrderItem(
+    ctx: StoreContext,
+    roomId: string,
+    input: { productId: string; quantity: number },
+    at: Date,
+  ): Promise<RoomBill> {
+    return this.withStore(ctx, async (client) => {
+      const roomResult = await client.query<RoomRow>(
+        `SELECT id, store_id, name, type, status, price_cents, floor, capacity
+           FROM app.room WHERE store_id = $1 AND id = $2`,
+        [ctx.storeId, roomId],
+      )
+      const roomRow = roomResult.rows[0]
+      if (!roomRow) throw roomNotFound(roomId)
+      const room = mapRoom(roomRow)
+
+      const order = await this.findActiveOrder(client, ctx.storeId, roomId, true)
+      if (!order) throw stateConflict("包厢没有进行中的订单，请先开房")
+
+      const productResult = await client.query<ProductRow>(
+        `SELECT id, store_id, name, category, unit, price_cents, member_price_cents, stock, status
+           FROM app.product
+          WHERE store_id = $1 AND id = $2
+          FOR UPDATE`,
+        [ctx.storeId, input.productId],
+      )
+      const productRow = productResult.rows[0]
+      if (!productRow || productRow.status !== "active") {
+        throw new ApiException(`商品不存在或已下架：${input.productId}`, 404, "not_found")
+      }
+      if (productRow.stock < input.quantity) {
+        throw new ApiException(
+          `库存不足：${productRow.name} 剩余 ${productRow.stock}`,
+          409,
+          "insufficient_stock",
+        )
+      }
+
+      const unitPriceCents = productRow.price_cents
+      const totalCents = unitPriceCents * input.quantity
+
+      await client.query(
+        `INSERT INTO app.room_order_item
+           (tenant_id, store_id, order_id, product_id, name_snapshot, unit_price_cents,
+            quantity, total_cents, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          ctx.tenantId,
+          ctx.storeId,
+          order.id,
+          productRow.id,
+          productRow.name,
+          unitPriceCents,
+          input.quantity,
+          totalCents,
+          ctx.userId,
+        ],
+      )
+      await client.query("UPDATE app.product SET stock = stock - $1 WHERE store_id = $2 AND id = $3", [
+        input.quantity,
+        ctx.storeId,
+        productRow.id,
+      ])
+      await client.query(
+        `INSERT INTO app.room_event (tenant_id, store_id, room_id, action, actor_id, before, after)
+         VALUES ($1, $2, $3, 'order_add', $4, NULL, $5::jsonb)`,
+        [
+          ctx.tenantId,
+          ctx.storeId,
+          roomId,
+          ctx.userId,
+          JSON.stringify({ productId: productRow.id, quantity: input.quantity, totalCents }),
+        ],
+      )
+
+      return this.loadBill(client, room, order, at)
+    })
+  }
+
+  async removeOrderItem(
+    ctx: StoreContext,
+    roomId: string,
+    itemId: string,
+    at: Date,
+  ): Promise<RoomBill> {
+    return this.withStore(ctx, async (client) => {
+      const roomResult = await client.query<RoomRow>(
+        `SELECT id, store_id, name, type, status, price_cents, floor, capacity
+           FROM app.room WHERE store_id = $1 AND id = $2`,
+        [ctx.storeId, roomId],
+      )
+      const roomRow = roomResult.rows[0]
+      if (!roomRow) throw roomNotFound(roomId)
+      const room = mapRoom(roomRow)
+
+      const order = await this.findActiveOrder(client, ctx.storeId, roomId, true)
+      if (!order) throw stateConflict("包厢没有进行中的订单，无法退单")
+
+      const itemResult = await client.query<OrderItemRow>(
+        `SELECT id, product_id, name_snapshot, unit_price_cents, quantity, total_cents, is_gift, created_at
+           FROM app.room_order_item
+          WHERE order_id = $1 AND id = $2
+          FOR UPDATE`,
+        [order.id, itemId],
+      )
+      const item = itemResult.rows[0]
+      if (!item) throw new ApiException(`消费明细不存在：${itemId}`, 404, "not_found")
+
+      await client.query("DELETE FROM app.room_order_item WHERE order_id = $1 AND id = $2", [
+        order.id,
+        itemId,
+      ])
+      if (item.product_id) {
+        await client.query(
+          "UPDATE app.product SET stock = stock + $1 WHERE store_id = $2 AND id = $3",
+          [item.quantity, ctx.storeId, item.product_id],
+        )
+      }
+      await client.query(
+        `INSERT INTO app.room_event (tenant_id, store_id, room_id, action, actor_id, before, after)
+         VALUES ($1, $2, $3, 'order_remove', $4, $5::jsonb, NULL)`,
+        [
+          ctx.tenantId,
+          ctx.storeId,
+          roomId,
+          ctx.userId,
+          JSON.stringify({
+            productId: item.product_id,
+            quantity: item.quantity,
+            totalCents: item.total_cents,
+          }),
+        ],
+      )
+
+      return this.loadBill(client, room, order, at)
+    })
+  }
+
   async checkoutRoom(
     ctx: StoreContext,
     roomId: string,
     idempotencyKey: string | undefined,
     endedAt: Date,
+    paymentMethod: PaymentMethod,
   ): Promise<CheckoutRoomResult> {
     try {
       return await this.withStore(ctx, async (client) => {
@@ -517,11 +791,14 @@ export class PostgresRepository implements AppRepository {
             if (order.room_id !== roomId) {
               throw new ApiException("幂等键与房间不匹配", 409, "idempotency_conflict")
             }
+            // 幂等重放：以原账单为准，避免重复计算或二次扣减。
+            const paidAt = order.ended_at ? iso(order.ended_at) : endedAt.toISOString()
+            const bill = await this.loadBill(client, room, order, new Date(paidAt))
             return {
+              ...bill,
               room,
-              orderId: order.id,
-              totalCents: order.total_cents ?? 0,
-              billableHours: order.billable_hours ?? 0,
+              paymentMethod: (order.payment_method as PaymentMethod | null) ?? paymentMethod,
+              paidAt,
             }
           }
         }
@@ -530,23 +807,26 @@ export class PostgresRepository implements AppRepository {
           throw stateConflict(`包厢当前状态为 ${room.status}，不能结账`)
         }
 
-        const activeOrder = await client.query<OrderRow>(
-          `SELECT * FROM app.room_order
-           WHERE store_id = $1 AND room_id = $2 AND status = 'active'
-           ORDER BY started_at DESC LIMIT 1 FOR UPDATE`,
-          [ctx.storeId, roomId],
-        )
-        const order = activeOrder.rows[0]
+        const order = await this.findActiveOrder(client, ctx.storeId, roomId, true)
         if (!order) throw stateConflict("缺少进行中的房间订单，无法结账")
 
-        const billableHours = calculateBillableHours(iso(order.started_at), endedAt.toISOString())
-        const totalCents = calculateRoomChargeCents(order.hourly_rate_cents, billableHours)
+        const bill = await this.loadBill(client, room, order, endedAt)
 
         await client.query(
           `UPDATE app.room_order
-           SET ended_at = $1, billable_hours = $2, total_cents = $3, status = 'paid', idempotency_key = $4
-           WHERE id = $5`,
-          [endedAt.toISOString(), billableHours, totalCents, idempotencyKey ?? null, order.id],
+              SET ended_at = $1, billable_hours = $2, room_cents = $3, items_cents = $4,
+                  total_cents = $5, status = 'paid', idempotency_key = $6, payment_method = $7
+            WHERE id = $8`,
+          [
+            endedAt.toISOString(),
+            bill.billableHours,
+            bill.roomCents,
+            bill.itemsCents,
+            bill.totalCents,
+            idempotencyKey ?? null,
+            paymentMethod,
+            order.id,
+          ],
         )
         await client.query("UPDATE app.room SET status = $1 WHERE store_id = $2 AND id = $3", [
           RoomStatus.CLEANING,
@@ -562,15 +842,22 @@ export class PostgresRepository implements AppRepository {
             roomId,
             ctx.userId,
             JSON.stringify({ status: room.status, totalCents: null }),
-            JSON.stringify({ status: RoomStatus.CLEANING, totalCents, billableHours }),
+            JSON.stringify({
+              status: RoomStatus.CLEANING,
+              roomCents: bill.roomCents,
+              itemsCents: bill.itemsCents,
+              totalCents: bill.totalCents,
+              billableHours: bill.billableHours,
+              paymentMethod,
+            }),
           ],
         )
 
         return {
+          ...bill,
           room: { ...room, status: RoomStatus.CLEANING },
-          orderId: order.id,
-          totalCents,
-          billableHours,
+          paymentMethod,
+          paidAt: endedAt.toISOString(),
         }
       })
     } catch (error) {
