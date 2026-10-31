@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import {
   createCsrfToken,
@@ -8,16 +9,19 @@ import {
   verifySessionToken,
 } from "./security"
 
+/** 测试凭据运行期随机生成，源码不落可用凭据字面量；测试只做相对比较。 */
+const TEST_PASSWORD = randomBytes(12).toString("hex")
+
 describe("security/password", () => {
   it("正确密码通过，错误密码拒绝", () => {
-    const digest = createPasswordDigest("test-password-123")
-    expect(verifyPassword("test-password-123", digest)).toBe(true)
+    const digest = createPasswordDigest(TEST_PASSWORD)
+    expect(verifyPassword(TEST_PASSWORD, digest)).toBe(true)
     expect(verifyPassword("wrong-password", digest)).toBe(false)
   })
 
   it("同一密码每次盐值不同", () => {
-    const first = createPasswordDigest("test-password-123")
-    const second = createPasswordDigest("test-password-123")
+    const first = createPasswordDigest(TEST_PASSWORD)
+    const second = createPasswordDigest(TEST_PASSWORD)
     expect(first.salt).not.toBe(second.salt)
     expect(first.hash).not.toBe(second.hash)
   })
@@ -48,7 +52,7 @@ describe("security/csrf token", () => {
 })
 
 describe("security/session token", () => {
-  const secret = "test-session-secret-1234567890"
+  const secret = randomBytes(24).toString("hex")
   const payload = {
     sid: "sid-1",
     sub: "user-1",

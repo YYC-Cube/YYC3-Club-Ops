@@ -4,12 +4,24 @@ import { createPreviewRooms, PREVIEW_TENANT, STORE_FLAGSHIP_ID, STORE_RIVER_ID }
 import { RoomStatus } from "../../lib/types"
 import { PostgresRepository } from "./postgres"
 import { PostgresLoginRateLimiter } from "../login-throttle"
-import { loadLocalEnv } from "../env"
+import { loadLocalEnv, resolveDatabaseUrl } from "../env"
 
 loadLocalEnv()
 
-const ownerUrl = process.env.TEST_DATABASE_OWNER_URL
-const appUrl = process.env.TEST_DATABASE_URL
+/** 集成测试复用生产连接串解析器；须显式配置两个角色连接串才启用（保持原 skip 语义）。 */
+function resolveIntegrationUrls(): { ownerUrl?: string; appUrl?: string } {
+  if (!process.env.TEST_DATABASE_OWNER_URL || !process.env.TEST_DATABASE_URL) return {}
+  try {
+    return {
+      ownerUrl: resolveDatabaseUrl("owner", true),
+      appUrl: resolveDatabaseUrl("app", true),
+    }
+  } catch {
+    return {}
+  }
+}
+
+const { ownerUrl, appUrl } = resolveIntegrationUrls()
 
 const enabled = Boolean(ownerUrl && appUrl)
 

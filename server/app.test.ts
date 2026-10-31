@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { beforeEach, describe, expect, it } from "vitest"
 import { createApp } from "./app"
 import { MemoryRepository } from "./repositories/memory"
@@ -5,8 +6,9 @@ import { createSeedUsers } from "./domain"
 import { MemoryLoginRateLimiter, type LoginRateLimitPolicy } from "./rate-limit"
 import { STORE_FLAGSHIP_ID, STORE_RIVER_ID } from "../lib/mocks/preview-session"
 
-const PASSWORD = "test-password-123"
-const SECRET = "test-session-secret-1234567890"
+/** 测试凭据运行期随机生成，源码不落可用凭据字面量；测试只做相对比较，不依赖具体值。secret 需 ≥16 字符。 */
+const PASSWORD = randomBytes(12).toString("hex")
+const SECRET = randomBytes(24).toString("hex")
 
 /** 主用例不受限流干扰；限流行为在专门用例中收紧。 */
 const GENEROUS_POLICY: LoginRateLimitPolicy = {
