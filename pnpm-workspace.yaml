@@ -1,0 +1,7 @@
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+
+# pnpm 12 起，依赖覆盖与构建脚本白名单统一放在 pnpm-workspace.yaml。
+overrides:
+  postcss: ^8.5.32
