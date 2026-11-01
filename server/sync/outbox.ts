@@ -6,7 +6,7 @@
  * sequence 取聚合根当前最大值 +1；调用方必须持有聚合行锁（FOR UPDATE），
  * 唯一索引 (aggregate_type, aggregate_id, sequence) 兜底并发。
  */
-import { createHash, randomUUID } from "node:crypto"
+import { createHash, createHmac, randomUUID } from "node:crypto"
 import type { Pool, PoolClient, QueryResultRow } from "pg"
 
 export const EVENT_PRODUCER = "yyc3-club-ops"
@@ -154,10 +154,13 @@ export function nextRetrySeconds(attempts: number): number {
 export interface RelayOptions {
   /** CMS 事件接收端点（POST {events:[...]}）；未配置时 no-op。 */
   endpoint?: string
-  /** 服务间认证 Bearer（CMS W3 HMAC 就绪前的过渡）。 */
-  token?: string
+  /** 服务间 HMAC 凭据：与 CMS 侧共享（协同规范 01 §安全；不留 Bearer 过渡）。 */
+  accessKey?: string
+  secret?: string
   limit?: number
   fetchImpl?: typeof fetch
+  now?: () => number
+  nonce?: () => string
 }
 
 export interface RelayResult {
@@ -213,16 +216,22 @@ export async function relayPendingEvents(
   }
 
   const events = claimed.map(buildEnvelope)
+  const body = JSON.stringify({ events })
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (options.accessKey && options.secret) {
+    const timestamp = String(options.now?.() ?? Date.now())
+    const nonce = options.nonce?.() ?? randomUUID()
+    const signature = createHmac("sha256", options.secret)
+      .update(`${options.accessKey}.${timestamp}.${nonce}.${body}`)
+      .digest("hex")
+    headers["X-YYC3-Access-Key"] = options.accessKey
+    headers["X-YYC3-Timestamp"] = timestamp
+    headers["X-YYC3-Nonce"] = nonce
+    headers["X-YYC3-Signature"] = signature
+  }
   let response: Response
   try {
-    response = await fetchImpl(options.endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      },
-      body: JSON.stringify({ events }),
-    })
+    response = await fetchImpl(options.endpoint, { method: "POST", headers, body })
   } catch (error) {
     await markRelayFailure(pool, claimed, error instanceof Error ? error.message : "network_error")
     return { picked: claimed.length, sent: 0, failed: claimed.length, skipped: false }

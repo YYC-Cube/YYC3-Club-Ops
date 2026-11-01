@@ -1,8 +1,9 @@
 /**
  * Outbox 中继 CLI：拉取 pending 事件投递 CMS。
  * 环境变量：
- *   SYNC_CMS_EVENTS_URL — CMS 接收端点（未配置时 no-op 退出）
- *   SYNC_CMS_TOKEN      — 服务间 Bearer（CMS W3 HMAC 就绪前的过渡）
+ *   SYNC_CMS_EVENTS_URL   — CMS 接收端点（未配置时 no-op 退出）
+ *   SYNC_HMAC_ACCESS_KEY  — 服务间 access key（协同规范 01 §安全）
+ *   SYNC_HMAC_SECRET      — 共享密钥（与 CMS SYNC_HMAC_SECRET 一致）
  * 调度：可由 cron/launchd 周期调用；多实例安全（SKIP LOCKED）。
  */
 import { loadLocalEnv, resolveDatabaseUrl } from "../env"
@@ -20,7 +21,8 @@ async function main(): Promise<void> {
   try {
     const result = await relayPendingEvents(pool, {
       endpoint,
-      token: process.env.SYNC_CMS_TOKEN?.trim() || undefined,
+      accessKey: process.env.SYNC_HMAC_ACCESS_KEY?.trim() || undefined,
+      secret: process.env.SYNC_HMAC_SECRET?.trim() || undefined,
       limit: 200,
     })
     console.log(
