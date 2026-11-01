@@ -218,6 +218,82 @@ async function main(): Promise<void> {
 
   // ---- 四域投影场景（CMS 投影器已就绪；事件由脚本构造模拟 App 侧产出）----
 
+  // 第 12 场景：record.archive 完整闭环——命令 → poller 应用 → master.product.deleted 回执 → relay → CMS 墓碑
+  {
+    const { Pool: AppPool } = await import("pg")
+    const { PostgresRepository } = await import("../server/repositories/postgres")
+    const { pollCommands } = await import("../server/sync/commands")
+    const appRepositoryPool = new AppPool({ connectionString: APP_DB, max: 2 })
+    const repository = new PostgresRepository(appRepositoryPool)
+    try {
+      const archiveId = `prd_arch_${randomUUID().slice(0, 8)}`
+      // App 库先建商品（archive 前提）
+      await appRepositoryPool.query(
+        `INSERT INTO app.product (id, tenant_id, store_id, name, category, unit, price_cents, stock, status, version)
+         VALUES ($1, $2, $3, $4, '饮品', '杯', 1500, 10, 'active', 1)
+         ON CONFLICT (id) DO NOTHING`,
+        [archiveId, TENANT, STORE, `E2E 封存-${archiveId.slice(-4)}`],
+      )
+      // CMS 投影先建行（墓碑 UPDATE 需命中既有行）：直插投影表，不占事件序列空间
+      {
+        await cmsPool.query(
+          `INSERT INTO public.operational_product
+             (id, tenant_id, store_id, code, name, category_id, unit, price_cents, stock, status, record_version, payload, deleted)
+           VALUES ($1, $2, $3, $4, $5, '饮品', '杯', 1500, 10, 'active', 1, '{}'::jsonb, false)
+           ON CONFLICT (id) DO NOTHING`,
+          [archiveId, TENANT, STORE, archiveId, `E2E 封存-${archiveId.slice(-4)}`],
+        )
+      }
+      const commandId = `cmd_e2e_arch_${randomUUID().slice(0, 8)}`
+      await cmsPool.query(
+        `INSERT INTO public.command_log
+           (command_id, command_type, aggregate_type, aggregate_id, tenant_id, store_id,
+            command_version, idempotency_key, payload, reason, operator_id, status)
+         VALUES ($1, 'record.archive', 'product', $2, $3, $4, 1, $5, $6::jsonb, 'E2E archive', 'usr_cms_op', 'issued')`,
+        [commandId, archiveId, TENANT, STORE, `e2e_${commandId}`, JSON.stringify({ operation: "archive" })],
+      )
+      const poll = await pollCommands(repository, { tenantId: TENANT, storeId: STORE, userId: "e2e-arch" }, {
+        endpoint: ENDPOINT.replace(/\/events$/, "/commands"),
+        tenantId: TENANT,
+        storeId: STORE,
+        credentials: { accessKey: ACCESS_KEY, secret: SECRET },
+      })
+      const ack = await cmsPool.query<{ status: string }>(
+        "SELECT status FROM public.command_log WHERE command_id = $1",
+        [commandId],
+      )
+      // App 回执事件（master.product.deleted）→ relay → CMS 投影墓碑
+      const receipt = await appPool.query<{ status: string }>(
+        `SELECT status FROM app.sync_outbox
+          WHERE aggregate_type = 'product' AND aggregate_id = $1 AND event_type = 'master.product.deleted'
+          ORDER BY created_at DESC LIMIT 1`,
+        [archiveId],
+      )
+      let deleted: boolean | null = null
+      if (receipt.rows[0]) {
+        const { relayPendingEvents } = await import("../server/sync/outbox")
+        await relayPendingEvents(appRepositoryPool, {
+          endpoint: ENDPOINT,
+          accessKey: ACCESS_KEY,
+          secret: SECRET,
+          limit: 10,
+        })
+        const proj = await cmsPool.query<{ deleted: boolean }>(
+          "SELECT deleted FROM public.operational_product WHERE id = $1",
+          [archiveId],
+        )
+        deleted = proj.rows[0]?.deleted ?? null
+      }
+      results.push({
+        name: "record.archive 完整闭环（命令→封存→deleted 回执→CMS 墓碑）",
+        pass: poll.applied === 1 && ack.rows[0]?.status === "applied" && deleted === true,
+        detail: `applied=${poll.applied} ack=${ack.rows[0]?.status} deleted=${deleted}`,
+      })
+    } finally {
+      await repository.close()
+    }
+  }
+
   // room 域：C4
   {
     const roomId = `room_e2e_${randomUUID().slice(0, 8)}`

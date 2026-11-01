@@ -136,6 +136,36 @@ export class MemoryRepository implements AppRepository {
     this.state = state
   }
 
+  async archiveProduct(ctx: StoreContext, productId: string, operatorId: string): Promise<{ version: number }> {
+    return this.mutate((state) => {
+      const products = state.productsByStore[ctx.storeId] ?? []
+      const index = products.findIndex((product) => product.id === productId)
+      if (index < 0) throw new ApiException(`商品不存在：${productId}`, 404, "not_found")
+      products[index] = { ...products[index], status: "inactive" }
+      const recordVersion =
+        state.syncEvents.filter(
+          (item) => item.aggregateType === "product" && item.aggregateId === productId,
+        ).length + 1
+      this.enqueueEvent(state, {
+        aggregateType: "product",
+        aggregateId: productId,
+        eventType: "master.product.deleted",
+        idempotencyKey: `master_product_archived:${productId}:v${recordVersion}`,
+        actorId: operatorId,
+        occurredAt: new Date().toISOString(),
+        payload: {
+          operation: "archive",
+          writer: "app",
+          recordVersion,
+          storeId: ctx.storeId,
+          productId,
+          deletedAt: new Date().toISOString(),
+        },
+      })
+      return { version: recordVersion }
+    })
+  }
+
   async applySettings(
     ctx: StoreContext,
     config: Record<string, unknown>,

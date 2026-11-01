@@ -1225,6 +1225,40 @@ export class PostgresRepository implements AppRepository {
     })
   }
 
+  async archiveProduct(ctx: StoreContext, productId: string, operatorId: string): Promise<{ version: number }> {
+    return this.withStore(ctx, async (client) => {
+      const archived = await client.query<{ version: number | string }>(
+        `UPDATE app.product
+            SET status = 'inactive', version = version + 1
+          WHERE store_id = $1 AND id = $2
+          RETURNING version`,
+        [ctx.storeId, productId],
+      )
+      if (archived.rows.length === 0) {
+        throw new ApiException(`商品不存在：${productId}`, 404, "not_found")
+      }
+      const version = Number(archived.rows[0].version)
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "product",
+        aggregateId: productId,
+        eventType: "master.product.deleted",
+        actorId: operatorId,
+        idempotencyKey: `master_product_archived:${productId}:v${version}`,
+        payload: {
+          operation: "archive",
+          writer: "app",
+          recordVersion: version,
+          storeId: ctx.storeId,
+          productId,
+          deletedAt: new Date().toISOString(),
+        },
+      })
+      return { version }
+    })
+  }
+
   async applyDevice(
     ctx: StoreContext,
     input: { deviceId: string; deviceType: "cashier" | "printer"; name: string; config: Record<string, unknown>; status: "active" | "inactive" | "offline" },

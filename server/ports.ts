@@ -137,6 +137,8 @@ export interface AppRepository {
     productId: string,
     patch: UpdateProductInput,
   ): Promise<PosProduct>
+  /** 封存商品（record.archive 命令；status 置 inactive）；同事务发 master.product.deleted */
+  archiveProduct(ctx: StoreContext, productId: string, operatorId: string): Promise<{ version: number }>
   /** 应用门店设置（App 写；settings.update 命令与本地编辑共用）；同事务发 master.settings.updated */
   applySettings(
     ctx: StoreContext,

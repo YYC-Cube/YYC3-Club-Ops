@@ -88,6 +88,13 @@ describe("sync/commands", () => {
       payload: { operation: "archive" },
     })
     expect(archive.status).toBe("applied")
+    // 契约（08 §5.2 record.archive）：回执 master.product.deleted，CMS 据此置墓碑
+    const events = await repository.read((state) => state.syncEvents)
+    const receipt = events.find(
+      (event) => event.eventType === "master.product.deleted" && event.aggregateId === product.id,
+    )
+    expect(receipt).toBeDefined()
+    expect(receipt?.payload.operation).toBe("archive")
     const archived = (await repository.listProducts(CTX)).find((item) => item.id === product.id)
     expect(archived).toBeUndefined()
 

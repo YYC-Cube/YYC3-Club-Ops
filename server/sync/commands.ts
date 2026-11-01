@@ -131,10 +131,10 @@ export async function applyCommand(
   // record.archive：封存/停用（02 §6.2）——产品域复用第一写入方路径，status 置 inactive
   if (command.commandType === "record.archive" && command.aggregateType === "product") {
     try {
-      await repository.updateProduct(
+      await repository.archiveProduct(
         { ...ctx, userId: command.operatorId || ctx.userId },
         String(command.aggregateId),
-        { status: "inactive" },
+        command.operatorId || ctx.userId,
       )
       return { status: "applied" }
     } catch (error) {
