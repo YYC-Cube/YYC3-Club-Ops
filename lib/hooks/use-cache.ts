@@ -149,6 +149,7 @@ export function useCachedData<T>(key: string, fetcher: () => Promise<T>, options
   )
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
     fetchData()
   }, [fetchData])
 

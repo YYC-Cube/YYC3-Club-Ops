@@ -1,6 +1,17 @@
 "use client"
 
 import { useState } from "react"
+
+// mock 会话/消息时间戳提为模块级常量（react-hooks/purity：render 期不调用 new Date/Date.now）
+const DC_TS_5MIN = new Date(Date.now() - 5 * 60000)
+const DC_TS_15MIN = new Date(Date.now() - 15 * 60000)
+const DC_TS_30MIN = new Date(Date.now() - 30 * 60000)
+const DC_TS_45MIN = new Date(Date.now() - 45 * 60000)
+const DC_TS_60MIN = new Date(Date.now() - 60 * 60000)
+const DC_TS_2H = new Date(Date.now() - 2 * 60 * 60000)
+const DC_TS_90MIN = new Date(Date.now() - 90 * 60000)
+const DC_TS_75MIN = new Date(Date.now() - 75 * 60000)
+const DC_TS_10MIN = new Date(Date.now() - 10 * 60000)
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -64,7 +75,7 @@ export default function DepartmentChannels() {
       lastMessage: {
         sender: "张三",
         content: "A08包厢客人需要加冰块",
-        timestamp: new Date(Date.now() - 5 * 60000),
+        timestamp: DC_TS_5MIN,
       },
       isOnline: true,
       priority: "high",
@@ -79,7 +90,7 @@ export default function DepartmentChannels() {
       lastMessage: {
         sender: "李四",
         content: "今日营业额已达成目标的85%",
-        timestamp: new Date(Date.now() - 15 * 60000),
+        timestamp: DC_TS_15MIN,
       },
       isOnline: true,
       priority: "normal",
@@ -94,7 +105,7 @@ export default function DepartmentChannels() {
       lastMessage: {
         sender: "王五",
         content: "今日特色菜品准备完毕",
-        timestamp: new Date(Date.now() - 30 * 60000),
+        timestamp: DC_TS_30MIN,
       },
       isOnline: true,
       priority: "normal",
@@ -119,7 +130,7 @@ export default function DepartmentChannels() {
       lastMessage: {
         sender: "赵经理",
         content: "明日晨会议题已发送",
-        timestamp: new Date(Date.now() - 45 * 60000),
+        timestamp: DC_TS_45MIN,
       },
       isOnline: true,
       priority: "high",
@@ -134,7 +145,7 @@ export default function DepartmentChannels() {
       lastMessage: {
         sender: "技术员小刘",
         content: "音响系统检修完成",
-        timestamp: new Date(Date.now() - 60 * 60000),
+        timestamp: DC_TS_60MIN,
       },
       isOnline: true,
       priority: "normal",
@@ -146,14 +157,14 @@ export default function DepartmentChannels() {
       id: "1",
       sender: "系统通知",
       content: "楼面服务部频道已创建，欢迎大家加入！",
-      timestamp: new Date(Date.now() - 2 * 60 * 60000),
+      timestamp: DC_TS_2H,
       type: "system",
     },
     {
       id: "2",
       sender: "张三",
       content: "大家好，我是新来的服务员，请多多指教！",
-      timestamp: new Date(Date.now() - 90 * 60000),
+      timestamp: DC_TS_90MIN,
       type: "text",
       avatar: "/placeholder.svg?height=32&width=32",
       role: "服务员",
@@ -162,7 +173,7 @@ export default function DepartmentChannels() {
       id: "3",
       sender: "李主管",
       content: "欢迎张三！今天的工作安排已经发到群里了，大家注意查看。",
-      timestamp: new Date(Date.now() - 75 * 60000),
+      timestamp: DC_TS_75MIN,
       type: "text",
       avatar: "/placeholder.svg?height=32&width=32",
       role: "主管",
@@ -171,14 +182,14 @@ export default function DepartmentChannels() {
       id: "4",
       sender: "系统警报",
       content: "A08包厢客人按下呼叫按钮，请就近服务员前往处理",
-      timestamp: new Date(Date.now() - 10 * 60000),
+      timestamp: DC_TS_10MIN,
       type: "alert",
     },
     {
       id: "5",
       sender: "张三",
       content: "A08包厢客人需要加冰块，我正在处理",
-      timestamp: new Date(Date.now() - 5 * 60000),
+      timestamp: DC_TS_5MIN,
       type: "text",
       avatar: "/placeholder.svg?height=32&width=32",
       role: "服务员",

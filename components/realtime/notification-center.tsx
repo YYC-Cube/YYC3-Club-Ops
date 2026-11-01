@@ -7,6 +7,14 @@ import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Bell, X, AlertTriangle, CheckCircle, Info, Clock, Zap } from "lucide-react"
 
+// mock 通知时间戳提为模块级常量（react-hooks/purity：render 期不调用 new Date/Date.now）
+const TS_2MIN = new Date(Date.now() - 2 * 60000)
+const TS_15MIN = new Date(Date.now() - 15 * 60000)
+const TS_30MIN = new Date(Date.now() - 30 * 60000)
+const TS_45MIN = new Date(Date.now() - 45 * 60000)
+const TS_60MIN = new Date(Date.now() - 60 * 60000)
+
+
 interface Notification {
   id: string
   type: "alert" | "info" | "success" | "warning" | "urgent"
@@ -26,7 +34,7 @@ export default function NotificationCenter() {
       type: "urgent",
       title: "紧急呼叫",
       message: "A08包厢客人按下紧急呼叫按钮",
-      timestamp: new Date(Date.now() - 2 * 60000),
+      timestamp: TS_2MIN,
       department: "楼面部",
       isRead: false,
       priority: "urgent",
@@ -37,7 +45,7 @@ export default function NotificationCenter() {
       type: "warning",
       title: "库存预警",
       message: "啤酒库存不足，剩余数量: 15瓶",
-      timestamp: new Date(Date.now() - 15 * 60000),
+      timestamp: TS_15MIN,
       department: "仓库",
       isRead: false,
       priority: "high",
@@ -48,7 +56,7 @@ export default function NotificationCenter() {
       type: "info",
       title: "员工签到",
       message: "张三已签到上班",
-      timestamp: new Date(Date.now() - 30 * 60000),
+      timestamp: TS_30MIN,
       department: "人事",
       isRead: true,
       priority: "normal",
@@ -58,7 +66,7 @@ export default function NotificationCenter() {
       type: "success",
       title: "营业目标达成",
       message: "今日营业额已达成目标的120%",
-      timestamp: new Date(Date.now() - 45 * 60000),
+      timestamp: TS_45MIN,
       department: "财务",
       isRead: false,
       priority: "normal",
@@ -68,7 +76,7 @@ export default function NotificationCenter() {
       type: "alert",
       title: "设备故障",
       message: "B区音响系统出现故障，需要维修",
-      timestamp: new Date(Date.now() - 60 * 60000),
+      timestamp: TS_60MIN,
       department: "技术部",
       isRead: false,
       priority: "high",

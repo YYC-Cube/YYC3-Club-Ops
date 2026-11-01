@@ -65,6 +65,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // 路由变化时自动切到对应分组，避免管理端页面看不到自己的导航入口。
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
     setActiveGroup(routeGroup)
   }, [routeGroup])
 

@@ -41,6 +41,8 @@ export default function AdaptiveSidebar({
   const [searchTerm, setSearchTerm] = useState("")
   const [sortBy, setSortBy] = useState<"usage" | "name" | "recent">("usage")
   const [filterBy, setFilterBy] = useState<"all" | "pinned" | "recent">("all")
+  // 「最近访问」判定基准时间：挂载时快照，避免 render 期调用 Date.now()（react-hooks/purity）
+  const [recentThreshold] = useState(() => Date.now())
   const [expandedItems, setExpandedItems] = useState<string[]>([])
 
   // 智能排序和过滤
@@ -124,7 +126,7 @@ export default function AdaptiveSidebar({
                     {item.metadata.isPinned && <Pin className="h-3 w-3 text-yellow-500" />}
 
                     {/* 最近访问指示器 */}
-                    {Date.now() - item.metadata.lastAccessed.getTime() < 60 * 60 * 1000 && (
+                    {recentThreshold - item.metadata.lastAccessed.getTime() < 60 * 60 * 1000 && (
                       <div className="h-2 w-2 bg-green-500 rounded-full" />
                     )}
                   </>

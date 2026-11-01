@@ -200,6 +200,7 @@ export default function EnhancedRoomDashboard({ onRoomClick, onQuickAction }: En
         features: ["外卖房"],
       },
     ]
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
     setRooms(mockRooms)
   }, [])
 

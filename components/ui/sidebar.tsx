@@ -648,12 +648,11 @@ const SidebarMenuSkeleton = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> & {
     showIcon?: boolean
+    width?: string
   }
 >(({ className, showIcon = false, ...props }, ref) => {
-  // Random width between 50 to 90%.
-  const width = React.useMemo(() => {
-    return `${Math.floor(Math.random() * 40) + 50}%`
-  }, [])
+  // 宽度由调用方传入 width prop；不使用随机值（react-hooks/purity：render 期禁 Math.random）
+  const width = props.width ?? "70%"
 
   return (
     <div

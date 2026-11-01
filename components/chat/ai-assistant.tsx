@@ -8,6 +8,9 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Bot, Send, Mic, Paperclip, Minimize2, X, Sparkles, Brain } from "lucide-react"
 
+// mock 消息初始时间戳（react-hooks/purity：render 期不调用 new Date）
+const AI_INITIAL_TS = new Date()
+
 interface Message {
   id: string
   type: "user" | "ai" | "system"
@@ -23,18 +26,20 @@ interface AIAssistantProps {
 }
 
 export default function AIAssistant({ isMinimized = false, onToggleMinimize, onClose }: AIAssistantProps) {
+  // 消息 id 计数器（事件回调内递增；替代 Date.now，react-hooks/purity）
+  const idCounter = useRef(0)
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
       type: "ai",
       content: "您好！我是智慧商家AI助手，可以帮您处理各种业务问题。请问有什么可以为您服务的吗？",
-      timestamp: new Date(),
+      timestamp: AI_INITIAL_TS,
     },
     {
       id: "2",
       type: "system",
       content: "AI助手已连接到您的业务系统，可以实时查询数据和执行操作。",
-      timestamp: new Date(),
+      timestamp: AI_INITIAL_TS,
     },
   ])
   const [inputValue, setInputValue] = useState("")
@@ -53,7 +58,7 @@ export default function AIAssistant({ isMinimized = false, onToggleMinimize, onC
     if (!inputValue.trim()) return
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: `user_msg_${(idCounter.current += 1)}`,
       type: "user",
       content: inputValue,
       timestamp: new Date(),

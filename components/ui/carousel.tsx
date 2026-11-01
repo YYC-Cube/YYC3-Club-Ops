@@ -111,6 +111,7 @@ const Carousel = React.forwardRef<
         return
       }
 
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
       onSelect(api)
       api.on("reInit", onSelect)
       api.on("select", onSelect)

@@ -795,7 +795,7 @@ export default function ProductManagement() {
               <CardContent>
                 <div className="space-y-4">
                   {categories.slice(0, 6).map((category, _index) => {
-                    const percentage = Math.floor(Math.random() * 30) + 10
+                    const percentage = 10 + ((Number.parseInt(category.id, 36) || 0) % 30)
                     return (
                       <div key={category.id} className="space-y-2">
                         <div className="flex items-center justify-between">
@@ -821,7 +821,7 @@ export default function ProductManagement() {
               <CardContent>
                 <div className="space-y-4">
                   {products.slice(0, 10).map((product) => {
-                    const sales = Math.floor(Math.random() * 1000) + 100
+                    const sales = 100 + ((Number.parseInt(product.id, 36) || 0) % 1000)
                     return (
                       <div key={product.id} className="space-y-2">
                         <div className="flex items-center justify-between">
