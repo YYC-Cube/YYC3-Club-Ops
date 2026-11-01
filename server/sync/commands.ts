@@ -128,6 +128,30 @@ export async function applyCommand(
     }
   }
 
+  if (command.commandType === "device.update") {
+    const payload = command.payload
+    const deviceType = payload.deviceType
+    const deviceId = typeof payload.deviceId === "string" ? payload.deviceId : command.aggregateId
+    const name = typeof payload.name === "string" ? payload.name : ""
+    const config = (typeof payload.config === "object" && payload.config !== null ? payload.config : {}) as Record<string, unknown>
+    const status = payload.status === "inactive" || payload.status === "offline" ? payload.status : "active"
+    if ((deviceType !== "cashier" && deviceType !== "printer") || !deviceId || !name) {
+      return { status: "rejected", errorCode: "invalid_device_payload" }
+    }
+    try {
+      await repository.applyDevice(
+        ctx,
+        { deviceId, deviceType, name, config, status },
+        command.operatorId || ctx.userId,
+      )
+      return { status: "applied" }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "apply_failed"
+      console.error(`[sync/commands] 设备应用失败 commandId=${command.commandId}: ${message}`)
+      return { status: "rejected", errorCode: "apply_failed" }
+    }
+  }
+
   if (command.commandType === "record.upsert" && command.aggregateType === "product") {
     const fields = (command.payload.fields ?? {}) as Record<string, unknown>
     const patch: UpdateProductPatch = {}

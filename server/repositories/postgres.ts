@@ -1225,6 +1225,47 @@ export class PostgresRepository implements AppRepository {
     })
   }
 
+  async applyDevice(
+    ctx: StoreContext,
+    input: { deviceId: string; deviceType: "cashier" | "printer"; name: string; config: Record<string, unknown>; status: "active" | "inactive" | "offline" },
+    operatorId: string,
+  ): Promise<{ version: number }> {
+    return this.withStore(ctx, async (client) => {
+      const upserted = await client.query<{ version: number | string }>(
+        `INSERT INTO app.device (id, tenant_id, store_id, device_type, name, config, status, version, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 1, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           device_type = EXCLUDED.device_type, name = EXCLUDED.name, config = EXCLUDED.config,
+           status = EXCLUDED.status, version = app.device.version + 1, updated_by = $8
+         RETURNING version`,
+        [input.deviceId, ctx.tenantId, ctx.storeId, input.deviceType, input.name,
+          JSON.stringify(input.config), input.status, operatorId],
+      )
+      const version = Number(upserted.rows[0]?.version ?? 1)
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "device",
+        aggregateId: input.deviceId,
+        eventType: "master.device.updated",
+        actorId: operatorId,
+        idempotencyKey: `master_device:${input.deviceId}:v${version}`,
+        payload: {
+          operation: "update",
+          writer: "app",
+          recordVersion: version,
+          storeId: ctx.storeId,
+          deviceId: input.deviceId,
+          deviceType: input.deviceType,
+          name: input.name,
+          config: input.config,
+          status: input.status,
+        },
+      })
+      return { version }
+    })
+  }
+
   async close(): Promise<void> {
     await this.pool.end()
   }

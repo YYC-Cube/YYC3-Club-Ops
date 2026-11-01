@@ -143,6 +143,12 @@ export interface AppRepository {
     config: Record<string, unknown>,
     operatorId: string,
   ): Promise<{ version: number }>
+  /** 应用设备登记/变更（device.update 命令）；同事务发 master.device.updated */
+  applyDevice(
+    ctx: StoreContext,
+    input: { deviceId: string; deviceType: "cashier" | "printer"; name: string; config: Record<string, unknown>; status: "active" | "inactive" | "offline" },
+    operatorId: string,
+  ): Promise<{ version: number }>
   /** 进行中房间账单（房费按 asOf 实时估算，商品按明细累计）；无进行中订单返回 null */
   getRoomBill(ctx: StoreContext, roomId: string, asOf: Date): Promise<RoomBill | null>
   /** 点单：校验商品/库存，快照单价，扣减库存；返回最新账单 */

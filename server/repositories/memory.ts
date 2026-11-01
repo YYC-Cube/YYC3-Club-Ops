@@ -73,6 +73,7 @@ interface ServerState {
   itemSeq: number
   /** 门店设置聚合（store_id → config/version）；applySettings 与 settings.update 命令共用 */
   settingsByStore: Record<string, { config: Record<string, unknown>; version: number }>
+  devicesByStore: Record<string, { deviceType: string; name: string; config: Record<string, unknown>; status: string; version: number }>
   /** 内存模式同步事件（与 app.sync_outbox 同构的最小投影，单测断言用） */
   syncEvents: SyncEventRecord[]
 }
@@ -117,6 +118,7 @@ export function createSeedState(): ServerState {
     auditSeq: 0,
     itemSeq: 0,
     settingsByStore: {},
+    devicesByStore: {},
     syncEvents: [],
   }
 }
@@ -654,6 +656,34 @@ export class MemoryRepository implements AppRepository {
       }
       room.status = status
       return { ...room }
+    })
+  }
+
+  async applyDevice(
+    ctx: StoreContext,
+    input: { deviceId: string; deviceType: "cashier" | "printer"; name: string; config: Record<string, unknown>; status: "active" | "inactive" | "offline" },
+    operatorId: string,
+  ): Promise<{ version: number }> {
+    return this.mutate((state) => {
+      const current = state.devicesByStore[input.deviceId]
+      const version = (current?.version ?? 0) + 1
+      state.devicesByStore[input.deviceId] = {
+        deviceType: input.deviceType, name: input.name, config: input.config, status: input.status, version,
+      }
+      this.enqueueEvent(state, {
+        aggregateType: "device",
+        aggregateId: input.deviceId,
+        eventType: "master.device.updated",
+        idempotencyKey: `master_device:${input.deviceId}:v${version}`,
+        actorId: operatorId,
+        occurredAt: new Date().toISOString(),
+        payload: {
+          operation: "update", writer: "app", recordVersion: version,
+          storeId: ctx.storeId, deviceId: input.deviceId,
+          deviceType: input.deviceType, name: input.name, config: input.config, status: input.status,
+        },
+      })
+      return { version }
     })
   }
 

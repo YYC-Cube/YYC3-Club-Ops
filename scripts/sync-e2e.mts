@@ -331,6 +331,26 @@ async function main(): Promise<void> {
   await appPool.end()
   await cmsPool.end()
 
+  // 第 11 场景：五域只读端点可见性（CMS 页面 mock→真数据迁移的验收口径）
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:3030/api/v1/read-model/product?tenantId=${encodeURIComponent(TENANT)}&storeId=${encodeURIComponent(STORE)}`,
+    )
+    const body = (await response.json()) as { success?: boolean; data?: Array<{ name?: string }> }
+    const visible = response.status === 200 && body.success === true && Array.isArray(body.data)
+    results.push({
+      name: "read-model 五域端点（PC mock→真数据验收口径）",
+      pass: visible,
+      detail: `http=${response.status} rows=${Array.isArray(body.data) ? body.data.length : "n/a"}`,
+    })
+  } catch (error) {
+    results.push({
+      name: "read-model 五域端点（PC mock→真数据验收口径）",
+      pass: false,
+      detail: error instanceof Error ? error.message : "unknown",
+    })
+  }
+
   const failed = results.filter((item) => !item.pass)
   console.log("\n===== 跨仓对接用例（05 §6 子集）=====")
   for (const item of results) {
