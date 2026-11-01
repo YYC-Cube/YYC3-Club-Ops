@@ -13,7 +13,13 @@ import {
   type ServerUser,
   type SessionRecord,
 } from "./domain"
-import type { AppRepository, AuthAuditEvent, AuthAuditInput, StoreContext } from "./ports"
+import type {
+  AppRepository,
+  AuthAuditEvent,
+  AuthAuditInput,
+  StoreContext,
+  UpdateProductInput,
+} from "./ports"
 import {
   DEFAULT_LOGIN_RATE_LIMIT,
   normalizeLoginKey,
@@ -110,6 +116,39 @@ function requireParam(c: Context<AppEnv>, name: string): string {
   const value = c.req.param(name)
   if (!value) {
     throw new ApiException(`缺少路径参数：${name}`, 400, "validation_error")
+  }
+  return value
+}
+
+function requireStringField(body: Record<string, unknown>, name: string, maxLength: number): string {
+  const value = body[name]
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ApiException(`缺少字段：${name}`, 400, "validation_error")
+  }
+  const trimmed = value.trim()
+  if (trimmed.length > maxLength) {
+    throw new ApiException(`字段过长：${name}（≤${maxLength}）`, 400, "validation_error")
+  }
+  return trimmed
+}
+
+function requireNonNegativeIntField(body: Record<string, unknown>, name: string): number {
+  const value = body[name]
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new ApiException(`字段必须是非负整数：${name}`, 400, "validation_error")
+  }
+  return value
+}
+
+function optionalNonNegativeIntField(
+  body: Record<string, unknown>,
+  name: string,
+): number | undefined | null {
+  const value = body[name]
+  if (value === null) return null
+  if (value === undefined) return undefined
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new ApiException(`字段必须是非负整数或 null：${name}`, 400, "validation_error")
   }
   return value
 }
@@ -517,6 +556,64 @@ export function createApp(options: CreateAppOptions) {
     assertSessionStore(session, storeId)
     const products = await repository.listProducts(storeContext(session, storeId))
     return c.json({ success: true, data: products })
+  })
+
+  // 商品新增：App 是门店商品第一写入方，写入与 master.product.created 同事务（协同规范 03 §3.6）
+  app.post("/api/stores/:storeId/products", requireAuth, async (c) => {
+    const storeId = requireParam(c, "storeId")
+    const session = c.get("session")
+    assertSessionStore(session, storeId)
+
+    const body = await readJson<Record<string, unknown>>(c)
+    const name = requireStringField(body, "name", 192)
+    const category = requireStringField(body, "category", 48)
+    const unit = requireStringField(body, "unit", 16)
+    const priceCents = requireNonNegativeIntField(body, "priceCents")
+    const stock = requireNonNegativeIntField(body, "stock")
+    const memberPriceCents = optionalNonNegativeIntField(body, "memberPriceCents")
+    if (memberPriceCents != null && priceCents < memberPriceCents) {
+      throw new ApiException("会员价不能高于门市价", 400, "validation_error")
+    }
+
+    const product = await repository.createProduct(storeContext(session, storeId), {
+      name,
+      category,
+      unit,
+      priceCents,
+      memberPriceCents: memberPriceCents ?? undefined,
+      stock,
+    })
+    return c.json({ success: true, data: product }, 201)
+  })
+
+  app.patch("/api/stores/:storeId/products/:productId", requireAuth, async (c) => {
+    const storeId = requireParam(c, "storeId")
+    const productId = requireParam(c, "productId")
+    const session = c.get("session")
+    assertSessionStore(session, storeId)
+
+    const body = await readJson<Record<string, unknown>>(c)
+    const patch: UpdateProductInput = {}
+    if (body.name !== undefined) patch.name = requireStringField(body, "name", 192)
+    if (body.category !== undefined) patch.category = requireStringField(body, "category", 48)
+    if (body.unit !== undefined) patch.unit = requireStringField(body, "unit", 16)
+    if (body.priceCents !== undefined) patch.priceCents = requireNonNegativeIntField(body, "priceCents")
+    if (body.memberPriceCents !== undefined) {
+      patch.memberPriceCents = optionalNonNegativeIntField(body, "memberPriceCents")
+    }
+    if (body.stock !== undefined) patch.stock = requireNonNegativeIntField(body, "stock")
+    if (body.status !== undefined) {
+      if (body.status !== "active" && body.status !== "inactive") {
+        throw new ApiException("status 仅支持 active/inactive", 400, "validation_error")
+      }
+      patch.status = body.status
+    }
+    if (Object.keys(patch).length === 0) {
+      throw new ApiException("至少提交一个变更字段", 400, "validation_error")
+    }
+
+    const product = await repository.updateProduct(storeContext(session, storeId), productId, patch)
+    return c.json({ success: true, data: product })
   })
 
   app.get("/api/stores/:storeId/rooms/:roomId/bill", requireAuth, async (c) => {

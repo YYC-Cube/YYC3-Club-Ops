@@ -574,6 +574,111 @@ paths:
           description: 未认证
         '403':
           description: 无权访问该门店（forbidden_store）
+    post:
+      summary: 新增门店商品（App 第一写入；同事务发 master.product.created）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, category, unit, priceCents, stock]
+              properties:
+                name:
+                  type: string
+                  maxLength: 192
+                category:
+                  type: string
+                  maxLength: 48
+                unit:
+                  type: string
+                  maxLength: 16
+                priceCents:
+                  type: integer
+                  minimum: 0
+                memberPriceCents:
+                  type: integer
+                  minimum: 0
+                  nullable: true
+                stock:
+                  type: integer
+                  minimum: 0
+      responses:
+        '201':
+          description: 已创建（同步 Outbox 含 master.product.created）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/PosProduct'
+        '400':
+          description: 校验失败（validation_error）
+        '401':
+          description: 未认证
+        '403':
+          description: 无权访问该门店（forbidden_store）
+  /stores/{storeId}/products/{productId}:
+    parameters:
+      - $ref: '#/components/parameters/StoreId'
+      - name: productId
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      summary: 更新门店商品（字段级变更；同事务发 master.product.updated）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name:
+                  type: string
+                  maxLength: 192
+                category:
+                  type: string
+                  maxLength: 48
+                unit:
+                  type: string
+                  maxLength: 16
+                priceCents:
+                  type: integer
+                  minimum: 0
+                memberPriceCents:
+                  type: integer
+                  minimum: 0
+                  nullable: true
+                stock:
+                  type: integer
+                  minimum: 0
+                status:
+                  type: string
+                  enum: [active, inactive]
+      responses:
+        '200':
+          description: 已更新（changedFields 非空时发 master.product.updated）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiEnvelope'
+                  - properties:
+                      data:
+                        $ref: '#/components/schemas/PosProduct'
+        '400':
+          description: 校验失败或空变更（validation_error）
+        '401':
+          description: 未认证
+        '403':
+          description: 无权访问该门店（forbidden_store）
+        '404':
+          description: 商品不存在（not_found）
   /stores/{storeId}/rooms/{roomId}/bill:
     parameters:
       - $ref: '#/components/parameters/StoreId'

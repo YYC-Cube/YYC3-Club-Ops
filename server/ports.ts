@@ -30,6 +30,29 @@ export interface AddOrderItemInput {
   quantity: number
 }
 
+/** 商品新增入参（App 是门店商品第一写入方，写入即发 master.product.created） */
+export interface CreateProductInput {
+  name: string
+  category: string
+  unit: string
+  priceCents: number
+  memberPriceCents?: number
+  costCents?: number
+  stock: number
+}
+
+/** 商品更新入参：仅提交变更字段；写入后发 master.product.updated（含 changedFields） */
+export interface UpdateProductInput {
+  name?: string
+  category?: string
+  unit?: string
+  priceCents?: number
+  memberPriceCents?: number | null
+  costCents?: number | null
+  stock?: number
+  status?: "active" | "inactive"
+}
+
 /** 登录/会话安全审计事件类型 */
 export type AuthAuditEvent =
   | "login_success"
@@ -106,6 +129,14 @@ export interface AppRepository {
 
   /** 门店价目表（仅 active 商品） */
   listProducts(ctx: StoreContext): Promise<PosProduct[]>
+  /** 新增门店商品（第一写入方）；与 master.product.created 事件同事务落库 */
+  createProduct(ctx: StoreContext, input: CreateProductInput): Promise<PosProduct>
+  /** 更新门店商品（字段级变更）；与 master.product.updated 事件同事务落库 */
+  updateProduct(
+    ctx: StoreContext,
+    productId: string,
+    patch: UpdateProductInput,
+  ): Promise<PosProduct>
   /** 进行中房间账单（房费按 asOf 实时估算，商品按明细累计）；无进行中订单返回 null */
   getRoomBill(ctx: StoreContext, roomId: string, asOf: Date): Promise<RoomBill | null>
   /** 点单：校验商品/库存，快照单价，扣减库存；返回最新账单 */

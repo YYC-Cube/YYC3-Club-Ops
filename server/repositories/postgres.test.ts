@@ -41,7 +41,7 @@ describe.skipIf(!enabled)("PostgresRepository integration", () => {
     try {
       await client.query("BEGIN")
       await client.query(
-        "TRUNCATE app.room_event, app.room_order_item, app.room_order, app.product, app.session, app.login_throttle, app.auth_audit RESTART IDENTITY",
+        "TRUNCATE app.sync_outbox, app.room_event, app.room_order_item, app.room_order, app.product, app.session, app.login_throttle, app.auth_audit RESTART IDENTITY",
       )
       for (const store of [STORE_FLAGSHIP_ID, STORE_RIVER_ID]) {
         await client.query(
@@ -435,5 +435,136 @@ describe.skipIf(!enabled)("PostgresRepository integration", () => {
     await expect(
       repo.addOrderItem(ctx, "room-fs-vip-01", { productId: "prod-river-1", quantity: 1 }, new Date()),
     ).rejects.toThrow(/不存在或已下架/)
+  })
+
+  it("同步 Outbox：交易与 master.* 事件同事务落库、聚合内递增、幂等重放不重复、中继可投递", async () => {
+    const ctx = {
+      tenantId: PREVIEW_TENANT.id,
+      storeId: STORE_FLAGSHIP_ID,
+      userId: "user-demo-manager",
+    }
+    const outboxCount = async (eventType?: string): Promise<number> => {
+      // 断言走 owner 连接：sync_outbox 仅 ENABLE RLS，应用角色无 GUC 上下文时不可见
+      if (eventType) {
+        const result = await adminPool.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM app.sync_outbox WHERE event_type = $1",
+          [eventType],
+        )
+        return Number(result.rows[0].count)
+      }
+      const result = await adminPool.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM app.sync_outbox",
+      )
+      return Number(result.rows[0].count)
+    }
+    const outboxRows = async () => {
+      const result = await adminPool.query<{
+        event_type: string
+        aggregate_type: string
+        aggregate_id: string
+        sequence: string
+        idempotency_key: string
+        payload: Record<string, unknown>
+        status: string
+      }>(
+        `SELECT event_type, aggregate_type, aggregate_id, sequence::text, idempotency_key, payload, status
+           FROM app.sync_outbox ORDER BY created_at, id`,
+      )
+      return result.rows
+    }
+
+    expect(await outboxCount()).toBe(0)
+
+    // 先建商品（App 第一写入 → master.product.created，sequence=1）
+    const product = await repo.createProduct(ctx, {
+      name: `云霄特饮-${Date.now()}`,
+      category: "饮品",
+      unit: "杯",
+      priceCents: 2200,
+      stock: 40,
+    })
+
+    // 开房 → 同事务出现 room.session.started
+    await repo.startRoom(ctx, "room-fs-vip-01", new Date("2026-10-31T02:00:00.000Z"))
+    expect(await outboxCount("room.session.started")).toBe(1)
+
+    // 点单 → order.item.added（room_order 聚合 sequence=1）
+    await repo.addOrderItem(
+      ctx,
+      "room-fs-vip-01",
+      { productId: product.id, quantity: 1 },
+      new Date("2026-10-31T02:10:00.000Z"),
+    )
+    expect(await outboxCount("order.item.added")).toBe(1)
+
+    // 结账 → order.checkout.completed；幂等重放不新增事件
+    const checkout = await repo.checkoutRoom(
+      ctx,
+      "room-fs-vip-01",
+      "pg-key-outbox-1",
+      new Date("2026-10-31T03:16:00.000Z"),
+      "cash",
+    )
+    expect(await outboxCount("order.checkout.completed")).toBe(1)
+    await repo.checkoutRoom(
+      ctx,
+      "room-fs-vip-01",
+      "pg-key-outbox-1",
+      new Date("2026-10-31T03:16:00.000Z"),
+      "wechat",
+    )
+    expect(await outboxCount("order.checkout.completed")).toBe(1)
+
+    // 聚合根内 sequence 严格递增；payload 携带事实快照
+    const rows = await outboxRows()
+    const orderEvents = rows.filter(
+      (row) => row.aggregate_type === "room_order" && row.aggregate_id === checkout.orderId,
+    )
+    expect(orderEvents.map((row) => Number(row.sequence))).toEqual([1, 2])
+    const completed = orderEvents.find((row) => row.event_type === "order.checkout.completed")
+    expect(completed?.payload.paymentMethod).toBe("cash")
+    expect(completed?.status).toBe("pending")
+
+    // master.product.created/updated：recordVersion 单调、changedFields 精确
+    const updated = await repo.updateProduct(ctx, product.id, { priceCents: 2600, stock: 36 })
+    expect(updated.priceCents).toBe(2600)
+
+    const createdEvent = (await outboxRows()).find(
+      (row) => row.event_type === "master.product.created" && row.aggregate_id === product.id,
+    )
+    const updatedEvent = (await outboxRows()).find(
+      (row) => row.event_type === "master.product.updated" && row.aggregate_id === product.id,
+    )
+    expect(createdEvent?.payload.recordVersion).toBe(1)
+    expect(createdEvent?.payload.writer).toBe("app")
+    expect(updatedEvent?.payload.recordVersion).toBe(2)
+    expect(updatedEvent?.payload.changedFields).toEqual(["priceCents", "stock"])
+
+    // 无变更的更新不产生事件
+    const before = await outboxCount("master.product.updated")
+    await repo.updateProduct(ctx, product.id, { priceCents: 2600 })
+    expect(await outboxCount("master.product.updated")).toBe(before)
+
+    // 中继：认领 pending → 批量投递 → 标记 sent
+    let relayBody: { events: Array<{ eventType: string }> } | undefined
+    const fetchImpl = (async (_input: unknown, init?: { body?: string }) => {
+      relayBody = JSON.parse(init?.body ?? "{}") as { events: Array<{ eventType: string }> }
+      return new Response(JSON.stringify({ accepted: relayBody?.events.length ?? 0 }), { status: 200 })
+    }) as typeof fetch
+
+    const { relayPendingEvents } = await import("../sync/outbox")
+    const result = await relayPendingEvents(adminPool, {
+      endpoint: "https://cms.example.test/api/v1/sync/events",
+      limit: 500,
+      fetchImpl,
+    })
+    expect(result.picked).toBe(await outboxCount())
+    expect(result.sent).toBe(result.picked)
+    expect(result.failed).toBe(0)
+    expect(relayBody?.events.map((event) => event.eventType)).toContain("master.product.created")
+    const statuses = await adminPool.query<{ status: string }>(
+      "SELECT DISTINCT status FROM app.sync_outbox",
+    )
+    expect(statuses.rows.map((row) => row.status)).toEqual(["sent"])
   })
 })

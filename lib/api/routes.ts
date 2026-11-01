@@ -15,6 +15,7 @@ export const API_PATHS = {
   storeRooms: "/stores/{storeId}/rooms",
   storeRoom: "/stores/{storeId}/rooms/{roomId}",
   storeProducts: "/stores/{storeId}/products",
+  storeProduct: "/stores/{storeId}/products/{productId}",
   roomBill: "/stores/{storeId}/rooms/{roomId}/bill",
   roomItems: "/stores/{storeId}/rooms/{roomId}/items",
   roomItem: "/stores/{storeId}/rooms/{roomId}/items/{itemId}",
@@ -47,6 +48,8 @@ export const apiRoutes = {
   roomStatus: (storeId: string, roomId: string) =>
     `/stores/${encodeSegment(storeId, "storeId")}/rooms/${encodeSegment(roomId, "roomId")}/status`,
   products: (storeId: string) => `/stores/${encodeSegment(storeId, "storeId")}/products`,
+  product: (storeId: string, productId: string) =>
+    `/stores/${encodeSegment(storeId, "storeId")}/products/${encodeSegment(productId, "productId")}`,
   roomBill: (storeId: string, roomId: string) =>
     `/stores/${encodeSegment(storeId, "storeId")}/rooms/${encodeSegment(roomId, "roomId")}/bill`,
   roomItems: (storeId: string, roomId: string) =>

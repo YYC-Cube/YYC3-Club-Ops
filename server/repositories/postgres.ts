@@ -29,9 +29,12 @@ import type {
   AuthAuditEvent,
   AuthAuditInput,
   CheckoutRoomResult,
+  CreateProductInput,
   StartRoomResult,
   StoreContext,
+  UpdateProductInput,
 } from "../ports"
+import { enqueueSyncEvent } from "../sync/outbox"
 
 interface UserRow extends QueryResultRow {
   id: string
@@ -123,6 +126,7 @@ interface ProductRow extends QueryResultRow {
   member_price_cents: number | null
   stock: number
   status: string
+  version?: number | string
 }
 
 interface OrderItemRow extends QueryResultRow {
@@ -540,6 +544,24 @@ export class PostgresRepository implements AppRepository {
         ],
       )
 
+      // 同事务写入 Outbox：提交即对 CMS「必达」（协同规范 03 §1）
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "room_session",
+        aggregateId: order.rows[0].id,
+        eventType: "room.session.started",
+        actorId: ctx.userId,
+        idempotencyKey: `room_started:${order.rows[0].id}`,
+        occurredAt: startedAt,
+        payload: {
+          roomId,
+          orderId: order.rows[0].id,
+          startedAt: startedAt.toISOString(),
+          pricingSnapshot: { hourlyRateCents: room.priceCents },
+        },
+      })
+
       return {
         room: { ...room, status: RoomStatus.OCCUPIED },
         orderId: order.rows[0].id,
@@ -610,6 +632,141 @@ export class PostgresRepository implements AppRepository {
     })
   }
 
+  async createProduct(ctx: StoreContext, input: CreateProductInput): Promise<PosProduct> {
+    return this.withStore(ctx, async (client) => {
+      const id = randomUUID()
+      const result = await client.query<ProductRow>(
+        `INSERT INTO app.product
+           (id, tenant_id, store_id, name, category, unit, price_cents,
+            member_price_cents, cost_cents, stock, status, version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active', 1)
+         RETURNING *`,
+        [
+          id,
+          ctx.tenantId,
+          ctx.storeId,
+          input.name,
+          input.category,
+          input.unit,
+          input.priceCents,
+          input.memberPriceCents ?? null,
+          input.costCents ?? null,
+          input.stock,
+        ],
+      )
+      const product = mapProduct(result.rows[0])
+      // App 是门店商品第一写入方：同事务发 master.product.created（03 §3.6）
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "product",
+        aggregateId: id,
+        eventType: "master.product.created",
+        actorId: ctx.userId,
+        idempotencyKey: `master_product_created:${id}:v1`,
+        payload: {
+          operation: "create",
+          writer: "app",
+          recordVersion: 1,
+          storeId: ctx.storeId,
+          productId: id,
+          name: product.name,
+          categoryId: product.category,
+          unit: product.unit,
+          priceCents: product.priceCents,
+          memberPriceCents: product.memberPriceCents ?? null,
+          stock: product.stock,
+          status: product.status,
+        },
+      })
+      return product
+    })
+  }
+
+  async updateProduct(
+    ctx: StoreContext,
+    productId: string,
+    patch: UpdateProductInput,
+  ): Promise<PosProduct> {
+    return this.withStore(ctx, async (client) => {
+      const current = await client.query<ProductRow>(
+        `SELECT * FROM app.product WHERE store_id = $1 AND id = $2 FOR UPDATE`,
+        [ctx.storeId, productId],
+      )
+      const row = current.rows[0]
+      if (!row) throw new ApiException(`商品不存在：${productId}`, 404, "not_found")
+
+      const next = {
+        name: patch.name ?? row.name,
+        category: patch.category ?? row.category,
+        unit: patch.unit ?? row.unit,
+        price_cents: patch.priceCents ?? row.price_cents,
+        member_price_cents:
+          patch.memberPriceCents === undefined ? row.member_price_cents : patch.memberPriceCents,
+        stock: patch.stock ?? row.stock,
+        status: patch.status ?? row.status,
+      }
+      const version = Number(row.version ?? 1) + 1
+      const updated = await client.query<ProductRow>(
+        `UPDATE app.product
+            SET name = $3, category = $4, unit = $5, price_cents = $6,
+                member_price_cents = $7, stock = $8, status = $9, version = $10
+          WHERE store_id = $1 AND id = $2
+          RETURNING *`,
+        [
+          ctx.storeId,
+          productId,
+          next.name,
+          next.category,
+          next.unit,
+          next.price_cents,
+          next.member_price_cents,
+          next.stock,
+          next.status,
+          version,
+        ],
+      )
+
+      // 字段级变更对比（03 §3.6：changedFields 必须属于 App owner）
+      const changes: Array<[key: string, before: unknown, after: unknown]> = [
+        ["name", row.name, next.name],
+        ["category", row.category, next.category],
+        ["unit", row.unit, next.unit],
+        ["priceCents", row.price_cents, next.price_cents],
+        ["memberPriceCents", row.member_price_cents, next.member_price_cents],
+        ["stock", row.stock, next.stock],
+        ["status", row.status, next.status],
+      ]
+      const changedFields = changes.filter(([, a, b]) => a !== b).map(([key]) => key)
+      if (changedFields.length > 0) {
+        const fields: Record<string, unknown> = {}
+        for (const [key, , after] of changes) {
+          if (changedFields.includes(key)) fields[key] = after
+        }
+        await enqueueSyncEvent(client, {
+          tenantId: ctx.tenantId,
+          storeId: ctx.storeId,
+          aggregateType: "product",
+          aggregateId: productId,
+          eventType: "master.product.updated",
+          actorId: ctx.userId,
+          idempotencyKey: `master_product_updated:${productId}:v${version}`,
+          payload: {
+            operation: "update",
+            writer: "app",
+            recordVersion: version,
+            storeId: ctx.storeId,
+            productId,
+            changedFields,
+            fields,
+          },
+        })
+      }
+
+      return mapProduct(updated.rows[0])
+    })
+  }
+
   async getRoomBill(ctx: StoreContext, roomId: string, asOf: Date): Promise<RoomBill | null> {
     return this.withStore(ctx, async (client) => {
       const roomResult = await client.query<RoomRow>(
@@ -666,11 +823,12 @@ export class PostgresRepository implements AppRepository {
       const unitPriceCents = productRow.price_cents
       const totalCents = unitPriceCents * input.quantity
 
-      await client.query(
+      const itemInsert = await client.query<{ id: string }>(
         `INSERT INTO app.room_order_item
            (tenant_id, store_id, order_id, product_id, name_snapshot, unit_price_cents,
             quantity, total_cents, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
         [
           ctx.tenantId,
           ctx.storeId,
@@ -699,6 +857,27 @@ export class PostgresRepository implements AppRepository {
           JSON.stringify({ productId: productRow.id, quantity: input.quantity, totalCents }),
         ],
       )
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "room_order",
+        aggregateId: order.id,
+        eventType: "order.item.added",
+        actorId: ctx.userId,
+        idempotencyKey: `order_item:${itemInsert.rows[0].id}`,
+        occurredAt: at,
+        payload: {
+          roomId,
+          orderId: order.id,
+          itemId: itemInsert.rows[0].id,
+          productId: productRow.id,
+          nameSnapshot: productRow.name,
+          unitPriceCents,
+          qty: input.quantity,
+          totalCents,
+          isGift: false,
+        },
+      })
 
       return this.loadBill(client, room, order, at)
     })
@@ -758,6 +937,25 @@ export class PostgresRepository implements AppRepository {
           }),
         ],
       )
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "room_order",
+        aggregateId: order.id,
+        eventType: "order.item.removed",
+        actorId: ctx.userId,
+        idempotencyKey: `order_item_removed:${itemId}`,
+        occurredAt: at,
+        payload: {
+          roomId,
+          orderId: order.id,
+          itemId,
+          productId: item.product_id,
+          qty: item.quantity,
+          totalCents: item.total_cents,
+          reason: null,
+        },
+      })
 
       return this.loadBill(client, room, order, at)
     })
@@ -852,6 +1050,27 @@ export class PostgresRepository implements AppRepository {
             }),
           ],
         )
+        await enqueueSyncEvent(client, {
+          tenantId: ctx.tenantId,
+          storeId: ctx.storeId,
+          aggregateType: "room_order",
+          aggregateId: order.id,
+          eventType: "order.checkout.completed",
+          actorId: ctx.userId,
+          idempotencyKey: `checkout:${order.id}`,
+          occurredAt: endedAt,
+          payload: {
+            roomId,
+            orderId: order.id,
+            orderNo: order.order_no,
+            roomCents: bill.roomCents,
+            itemsCents: bill.itemsCents,
+            totalCents: bill.totalCents,
+            billableHours: bill.billableHours,
+            paymentMethod,
+            paidAt: endedAt.toISOString(),
+          },
+        })
 
         return {
           ...bill,
@@ -898,6 +1117,21 @@ export class PostgresRepository implements AppRepository {
           JSON.stringify({ status: RoomStatus.AVAILABLE }),
         ],
       )
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "room",
+        aggregateId: roomId,
+        eventType: "room.status.changed",
+        actorId: ctx.userId,
+        idempotencyKey: `room_cleaned:${roomId}:${randomUUID()}`,
+        payload: {
+          roomId,
+          from: room.status,
+          to: RoomStatus.AVAILABLE,
+          reason: "clean",
+        },
+      })
       return { ...room, status: RoomStatus.AVAILABLE }
     })
   }
@@ -936,6 +1170,21 @@ export class PostgresRepository implements AppRepository {
           JSON.stringify({ status }),
         ],
       )
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "room",
+        aggregateId: roomId,
+        eventType: "room.status.changed",
+        actorId: ctx.userId,
+        idempotencyKey: `room_status:${roomId}:${randomUUID()}`,
+        payload: {
+          roomId,
+          from: room.status,
+          to: status,
+          reason: "status_update",
+        },
+      })
       return { ...room, status }
     })
   }

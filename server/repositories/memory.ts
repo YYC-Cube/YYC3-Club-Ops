@@ -26,9 +26,12 @@ import type {
   AuthAuditEvent,
   AuthAuditInput,
   CheckoutRoomResult,
+  CreateProductInput,
   StartRoomResult,
   StoreContext,
+  UpdateProductInput,
 } from "../ports"
+import { newEventId, type SyncEventRecord } from "../sync/outbox"
 
 interface RoomOrderItem {
   id: string
@@ -68,6 +71,8 @@ interface ServerState {
   authAudit: AuthAuditEntry[]
   auditSeq: number
   itemSeq: number
+  /** 内存模式同步事件（与 app.sync_outbox 同构的最小投影，单测断言用） */
+  syncEvents: SyncEventRecord[]
 }
 
 /** 内存模式的价目表种子（与数据库 seed 保持同名同价，便于对照） */
@@ -109,6 +114,7 @@ export function createSeedState(): ServerState {
     authAudit: [],
     auditSeq: 0,
     itemSeq: 0,
+    syncEvents: [],
   }
 }
 
@@ -328,6 +334,133 @@ export class MemoryRepository implements AppRepository {
     return this.read((state) =>
       (state.productsByStore[ctx.storeId] ?? []).filter((product) => product.status === "active"),
     )
+  }
+
+  /** 内存 Outbox 入队：聚合根内递增 + 幂等键去重（语义与 app.sync_outbox 一致） */
+  private enqueueEvent(
+    state: ServerState,
+    event: Omit<SyncEventRecord, "eventId" | "sequence">,
+  ): void {
+    if (state.syncEvents.some((item) => item.idempotencyKey === event.idempotencyKey)) return
+    const sequence =
+      state.syncEvents
+        .filter(
+          (item) =>
+            item.aggregateType === event.aggregateType &&
+            item.aggregateId === event.aggregateId,
+        )
+        .reduce((max, item) => Math.max(max, item.sequence), 0) + 1
+    state.syncEvents.push({ ...event, eventId: newEventId(), sequence })
+  }
+
+  async createProduct(ctx: StoreContext, input: CreateProductInput): Promise<PosProduct> {
+    return this.mutate((state) => {
+      const products = (state.productsByStore[ctx.storeId] ??= [])
+      if (products.some((product) => product.name === input.name && product.status === "active")) {
+        throw new ApiException(`商品已存在：${input.name}`, 409, "conflict")
+      }
+      const product: PosProduct = {
+        id: `${ctx.storeId}-prod-${crypto.randomUUID().slice(0, 8)}`,
+        storeId: ctx.storeId,
+        name: input.name,
+        category: input.category,
+        unit: input.unit,
+        priceCents: input.priceCents,
+        memberPriceCents: input.memberPriceCents,
+        stock: input.stock,
+        status: "active",
+      }
+      products.push(product)
+      this.enqueueEvent(state, {
+        aggregateType: "product",
+        aggregateId: product.id,
+        eventType: "master.product.created",
+        idempotencyKey: `master_product_created:${product.id}:v1`,
+        actorId: ctx.userId,
+        occurredAt: new Date().toISOString(),
+        payload: {
+          operation: "create",
+          writer: "app",
+          recordVersion: 1,
+          storeId: ctx.storeId,
+          productId: product.id,
+          name: product.name,
+          categoryId: product.category,
+          unit: product.unit,
+          priceCents: product.priceCents,
+          memberPriceCents: product.memberPriceCents ?? null,
+          stock: product.stock,
+          status: product.status,
+        },
+      })
+      return product
+    })
+  }
+
+  async updateProduct(
+    ctx: StoreContext,
+    productId: string,
+    patch: UpdateProductInput,
+  ): Promise<PosProduct> {
+    return this.mutate((state) => {
+      const products = state.productsByStore[ctx.storeId] ?? []
+      const index = products.findIndex((product) => product.id === productId)
+      if (index < 0) throw new ApiException(`商品不存在：${productId}`, 404, "not_found")
+      const before = products[index]
+      const after: PosProduct = {
+        ...before,
+        name: patch.name ?? before.name,
+        category: patch.category ?? before.category,
+        unit: patch.unit ?? before.unit,
+        priceCents: patch.priceCents ?? before.priceCents,
+        memberPriceCents:
+          patch.memberPriceCents === undefined
+            ? before.memberPriceCents
+            : patch.memberPriceCents ?? undefined,
+        stock: patch.stock ?? before.stock,
+        status: patch.status ?? before.status,
+      }
+      products[index] = after
+
+      const comparableKeys = [
+        "name",
+        "category",
+        "unit",
+        "priceCents",
+        "memberPriceCents",
+        "stock",
+        "status",
+      ] as const
+      const changedFields = comparableKeys.filter(
+        (key) => before[key] !== after[key],
+      )
+      if (changedFields.length > 0) {
+        const fields: Record<string, unknown> = {}
+        for (const key of changedFields) fields[key] = after[key]
+        const recordVersion =
+          state.syncEvents.filter(
+            (item) => item.aggregateType === "product" && item.aggregateId === productId,
+          ).length + 1
+        this.enqueueEvent(state, {
+          aggregateType: "product",
+          aggregateId: productId,
+          eventType: "master.product.updated",
+          idempotencyKey: `master_product_updated:${productId}:v${recordVersion}`,
+          actorId: ctx.userId,
+          occurredAt: new Date().toISOString(),
+          payload: {
+            operation: "update",
+            writer: "app",
+            recordVersion,
+            storeId: ctx.storeId,
+            productId,
+            changedFields,
+            fields,
+          },
+        })
+      }
+      return after
+    })
   }
 
   async getRoomBill(ctx: StoreContext, roomId: string, asOf: Date): Promise<RoomBill | null> {

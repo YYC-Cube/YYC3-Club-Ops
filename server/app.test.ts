@@ -380,6 +380,135 @@ describe("api/admin 审计与强制下线", () => {
   })
 })
 
+describe("api/products 门店商品第一写入（master.* 事件）", () => {
+  const productsPath = `/api/stores/${STORE_FLAGSHIP_ID}/products`
+
+  const listSyncEvents = () =>
+    repository.read((state) =>
+      state.syncEvents.filter((event) => event.eventType.startsWith("master.product.")),
+    )
+
+  it("新增商品返回 201，同事务产生 master.product.created（recordVersion=1，writer=app）", async () => {
+    const { cookie, csrfToken } = await login()
+
+    const response = await app.request(productsPath, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({
+        name: "大师精酿",
+        category: "酒水",
+        unit: "瓶",
+        priceCents: 2800,
+        stock: 50,
+      }),
+    })
+    expect(response.status).toBe(201)
+    const body = (await response.json()) as { data: { id: string; name: string; status: string } }
+    expect(body.data.name).toBe("大师精酿")
+    expect(body.data.status).toBe("active")
+
+    const events = await listSyncEvents()
+    const created = events.find(
+      (event) =>
+        event.eventType === "master.product.created" &&
+        event.payload.productId === body.data.id,
+    )
+    expect(created).toBeDefined()
+    expect(created?.payload.writer).toBe("app")
+    expect(created?.payload.recordVersion).toBe(1)
+  })
+
+  it("更新商品发 master.product.updated，含 changedFields 与递增 recordVersion", async () => {
+    const { cookie, csrfToken } = await login()
+
+    const created = await app.request(productsPath, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ name: "芝士拼盘", category: "小食", unit: "份", priceCents: 5800, stock: 10 }),
+    })
+    const createdBody = (await created.json()) as { data: { id: string } }
+    const { id } = createdBody.data
+
+    const updated = await app.request(`${productsPath}/${id}`, {
+      method: "PATCH",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ priceCents: 6800, stock: 8 }),
+    })
+    expect(updated.status).toBe(200)
+    const updatedBody = (await updated.json()) as { data: { priceCents: number; stock: number } }
+    expect(updatedBody.data.priceCents).toBe(6800)
+    expect(updatedBody.data.stock).toBe(8)
+
+    const events = await listSyncEvents()
+    const change = events.find(
+      (event) =>
+        event.eventType === "master.product.updated" && event.payload.productId === id,
+    )
+    expect(change).toBeDefined()
+    expect(change?.payload.changedFields).toEqual(["priceCents", "stock"])
+    expect(change?.payload.recordVersion).toBeGreaterThan(1)
+  })
+
+  it("无变更的 PATCH 不产生事件；校验失败返回 400", async () => {
+    const { cookie, csrfToken } = await login()
+
+    const created = await app.request(productsPath, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ name: "柠檬茶", category: "饮品", unit: "杯", priceCents: 1200, stock: 30 }),
+    })
+    const createdJson = (await created.json()) as { data: { id: string } }
+    const { id } = createdJson.data
+    const before = (await listSyncEvents()).length
+
+    const noop = await app.request(`${productsPath}/${id}`, {
+      method: "PATCH",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ priceCents: 1200 }),
+    })
+    expect(noop.status).toBe(200)
+    expect((await listSyncEvents()).length).toBe(before)
+
+    const missingName = await app.request(productsPath, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ category: "酒水", unit: "瓶", priceCents: 100, stock: 1 }),
+    })
+    expect(missingName.status).toBe(400)
+
+    const negativePrice = await app.request(productsPath, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ name: "负价商品", category: "酒水", unit: "瓶", priceCents: -1, stock: 1 }),
+    })
+    expect(negativePrice.status).toBe(400)
+
+    const emptyPatch = await app.request(`${productsPath}/${id}`, {
+      method: "PATCH",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({}),
+    })
+    expect(emptyPatch.status).toBe(400)
+  })
+
+  it("未认证与跨门店写访问被拒绝", async () => {
+    const anonymous = await app.request(productsPath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "x", category: "x", unit: "x", priceCents: 1, stock: 1 }),
+    })
+    expect(anonymous.status).toBe(401)
+
+    const { cookie, csrfToken } = await login("13900139000")
+    const crossStore = await app.request(`/api/stores/${STORE_RIVER_ID}/products`, {
+      method: "POST",
+      headers: authHeaders(cookie, csrfToken),
+      body: JSON.stringify({ name: "跨店商品", category: "酒水", unit: "瓶", priceCents: 100, stock: 1 }),
+    })
+    expect(crossStore.status).toBe(403)
+  })
+})
+
 describe("api/pos 点单与结账闭环", () => {
   const roomPath = `/api/stores/${STORE_FLAGSHIP_ID}/rooms/room-fs-vip-01`
 
