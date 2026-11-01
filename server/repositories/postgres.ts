@@ -687,6 +687,7 @@ export class PostgresRepository implements AppRepository {
     ctx: StoreContext,
     productId: string,
     patch: UpdateProductInput,
+    eventExtra?: Record<string, unknown>,
   ): Promise<PosProduct> {
     return this.withStore(ctx, async (client) => {
       const current = await client.query<ProductRow>(
@@ -759,6 +760,7 @@ export class PostgresRepository implements AppRepository {
             productId,
             changedFields,
             fields,
+            ...(eventExtra ?? {}),
           },
         })
       }

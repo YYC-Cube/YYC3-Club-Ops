@@ -136,6 +136,7 @@ export interface AppRepository {
     ctx: StoreContext,
     productId: string,
     patch: UpdateProductInput,
+    eventExtra?: Record<string, unknown>,
   ): Promise<PosProduct>
   /** 封存商品（record.archive 命令；status 置 inactive）；同事务发 master.product.deleted */
   archiveProduct(ctx: StoreContext, productId: string, operatorId: string): Promise<{ version: number }>

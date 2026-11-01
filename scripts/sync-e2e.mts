@@ -404,6 +404,85 @@ async function main(): Promise<void> {
     }
   }
 
+  // 第 13 场景：price.override 审计链路——命令 → poller 应用（override 三元组入事件）
+  //   → relay → CMS price_override_audit 审计行 + 投影价格更新
+  {
+    const { Pool: AppPool } = await import("pg")
+    const { PostgresRepository } = await import("../server/repositories/postgres")
+    const { pollCommands } = await import("../server/sync/commands")
+    const appRepositoryPool = new AppPool({ connectionString: APP_DB, max: 2 })
+    const repository = new PostgresRepository(appRepositoryPool)
+    try {
+      const overrideId = `prd_ovr_${randomUUID().slice(0, 8)}`
+      // App 库建商品 + CMS 投影先建行（覆写 UPDATE 需命中既有行）
+      await appRepositoryPool.query(
+        `INSERT INTO app.product (id, tenant_id, store_id, name, category, unit, price_cents, stock, status, version)
+         VALUES ($1, $2, $3, $4, '饮品', '杯', 500, 20, 'active', 1)
+         ON CONFLICT (id) DO NOTHING`,
+        [overrideId, TENANT, STORE, `E2E 覆写-${overrideId.slice(-4)}`],
+      )
+      await cmsPool.query(
+        `INSERT INTO public.operational_product
+           (id, tenant_id, store_id, code, name, category_id, unit, price_cents, stock, status, record_version, payload, deleted)
+         VALUES ($1, $2, $3, $4, $5, '饮品', '杯', 500, 20, 'active', 1, '{}'::jsonb, false)
+         ON CONFLICT (id) DO NOTHING`,
+        [overrideId, TENANT, STORE, overrideId, `E2E 覆写-${overrideId.slice(-4)}`],
+      )
+      const commandId = `cmd_e2e_ovr_${randomUUID().slice(0, 8)}`
+      await cmsPool.query(
+        `INSERT INTO public.command_log
+           (command_id, command_type, aggregate_type, aggregate_id, tenant_id, store_id,
+            command_version, idempotency_key, payload, reason, operator_id, status)
+         VALUES ($1, 'price.override', 'product', $2, $3, $4, 1, $5, $6::jsonb, 'E2E 价格覆写审计', 'usr_cms_op', 'issued')`,
+        [commandId, overrideId, TENANT, STORE, `e2e_${commandId}`, JSON.stringify({ priceCents: 1234 })],
+      )
+      const poll = await pollCommands(repository, { tenantId: TENANT, storeId: STORE, userId: "e2e-ovr" }, {
+        endpoint: ENDPOINT.replace(/\/events$/, "/commands"),
+        tenantId: TENANT,
+        storeId: STORE,
+        credentials: { accessKey: ACCESS_KEY, secret: SECRET },
+      })
+      const ack = await cmsPool.query<{ status: string }>(
+        "SELECT status FROM public.command_log WHERE command_id = $1",
+        [commandId],
+      )
+      // App 回执（含 override 三元组）→ relay → CMS 审计行 + 投影
+      const receipt = await appPool.query<{ status: string }>(
+        `SELECT status FROM app.sync_outbox
+          WHERE aggregate_id = $1 AND event_type = 'master.product.updated'
+          ORDER BY created_at DESC LIMIT 1`,
+        [overrideId],
+      )
+      const { relayPendingEvents } = await import("../server/sync/outbox")
+      const relay = await relayPendingEvents(appRepositoryPool, {
+        endpoint: ENDPOINT,
+        accessKey: ACCESS_KEY,
+        secret: SECRET,
+        limit: 10,
+      })
+      const audit = await cmsPool.query<{ override_cents: string; override_reason: string; override_operator_id: string }>(
+        "SELECT override_cents::text AS override_cents, override_reason, override_operator_id FROM public.price_override_audit WHERE product_id = $1 ORDER BY created_at DESC LIMIT 1",
+        [overrideId],
+      )
+      const projected = await cmsPool.query<{ price_cents: string }>(
+        "SELECT price_cents::text AS price_cents FROM public.operational_product WHERE id = $1",
+        [overrideId],
+      )
+      results.push({
+        name: "price.override 审计链路（第 13 场景：命令→三元组→审计行→投影）",
+        pass:
+          poll.applied === 1 &&
+          ack.rows[0]?.status === "applied" &&
+          audit.rows[0]?.override_cents === "1234" &&
+          audit.rows[0]?.override_operator_id === "usr_cms_op" &&
+          projected.rows[0]?.price_cents === "1234",
+        detail: `applied=${poll.applied} ack=${ack.rows[0]?.status} 审计=${JSON.stringify(audit.rows[0] ?? null)} 投影=${projected.rows[0]?.price_cents ?? "none"} relay=${relay.sent}`,
+      })
+    } finally {
+      await repository.close()
+    }
+  }
+
   await appPool.end()
   await cmsPool.end()
 

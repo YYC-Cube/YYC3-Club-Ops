@@ -90,19 +90,27 @@ describe("sync/commands", () => {
     expect(archive.status).toBe("applied")
     // 契约（08 §5.2 record.archive）：回执 master.product.deleted，CMS 据此置墓碑
     const events = await repository.read((state) => state.syncEvents)
-    const receipt = events.find(
+    const archiveReceipt = events.find(
       (event) => event.eventType === "master.product.deleted" && event.aggregateId === product.id,
     )
-    expect(receipt).toBeDefined()
-    expect(receipt?.payload.operation).toBe("archive")
+    expect(archiveReceipt).toBeDefined()
+    expect(archiveReceipt?.payload.operation).toBe("archive")
     const archived = (await repository.listProducts(CTX)).find((item) => item.id === product.id)
     expect(archived).toBeUndefined()
 
     const override = await applyCommand(repository, CTX, {
-      ...buildCommand({ commandType: "price.override", aggregateId: product.id }),
+      ...buildCommand({ commandType: "price.override", aggregateId: product.id, reason: "强制价格审计" }),
       payload: { priceCents: 999 },
     })
     expect(override.status).toBe("applied")
+    // 04 §4 审计三元组随事件透传（与普通改价区分审计口径）
+    const overrideEvents = await repository.read((state) => state.syncEvents)
+    const overrideReceipt = overrideEvents.find(
+      (event) => event.eventType === "master.product.updated" && event.aggregateId === product.id,
+    )
+    expect(overrideReceipt?.payload.overrideCents).toBe(999)
+    expect(overrideReceipt?.payload.overrideReason).toBe("强制价格审计")
+    expect(overrideReceipt?.payload.overrideOperatorId).toBe("usr_cms_op")
 
     const invalid = await applyCommand(repository, CTX, {
       ...buildCommand({ commandType: "price.override", aggregateId: product.id }),

@@ -155,6 +155,12 @@ export async function applyCommand(
         { ...ctx, userId: command.operatorId || ctx.userId },
         String(command.aggregateId),
         { priceCents: overridePrice },
+        // 04 §4 价格覆写审计三元组（与普通改价区分审计口径）
+        {
+          overrideCents: overridePrice,
+          overrideReason: command.reason ?? command.payload.reason ?? "强制价格",
+          overrideOperatorId: command.operatorId,
+        },
       )
       return { status: "applied" }
     } catch (error) {

@@ -469,6 +469,7 @@ export class MemoryRepository implements AppRepository {
     ctx: StoreContext,
     productId: string,
     patch: UpdateProductInput,
+    eventExtra?: Record<string, unknown>,
   ): Promise<PosProduct> {
     return this.mutate((state) => {
       const products = state.productsByStore[ctx.storeId] ?? []
@@ -524,6 +525,7 @@ export class MemoryRepository implements AppRepository {
             productId,
             changedFields,
             fields,
+            ...(eventExtra ?? {}),
           },
         })
       }
