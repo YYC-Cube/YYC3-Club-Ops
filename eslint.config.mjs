@@ -25,10 +25,9 @@ const config = [
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
       "react/no-unescaped-entities": "warn",
-      // Next 16 / React Compiler 新规则：存量命中约 25 处，降级为警告过渡；
-      // 逐点修复（纯函数化渲染、effect 内 setState 移出）列入跟进项，修复一处删一处。
-      "react-hooks/purity": "warn",
-      "react-hooks/set-state-in-effect": "warn",
+      // Next 16 / React Compiler 新规则：purity 16 处已修复（mock 时间戳模块级、
+      // 确定性 mock 值、挂载期快照）；set-state 7 处合法模式改行级豁免后，两条规则
+      // 已恢复 error 严格态（2026-11-01）。
     },
   },
 ]
