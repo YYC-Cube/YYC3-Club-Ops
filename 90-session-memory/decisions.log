@@ -13,3 +13,6 @@
 [2026-11-02] DECISION | Mimosa 误报根治与提交政策（398ea76）| 函数内参数化模板写法 + 审核/测试通过后自动 commit + SSH push | 每次人工确认再提交 | 误报已根治，自动化提交符合会话延续性政策
 [2026-11-02] DECISION | 「外部还原」事件归因修正 | 归因为自身 stale 快照覆盖——多编辑后整文件 Write 前必须重读 | 保留「外部还原」结论 | 实证无外部写入者，根因在本方快照过期
 [2026-11-02] DECISION | Session Protocol 文件载体 | 90-session-memory 五文件落 YYC3-Club-Ops 主干仓，CMS 镜像 diff -rq=0 | 仅 auto-memory 承载 / 双仓独立演进 | stage 级上下文需文件链跨会话传递；镜像保证双仓口径一致
+[2026-11-02] DECISION | CMS msw XHR 拦截专项（三候选定案）| @happy-dom/jest-environment docblock 每文件环境 + rettime/until-async/deferred-promise esbuild 真实转译 vendor（scripts/msw-vendor.sh 再生）| 整仓换 happy-dom 环境（Jest 29 不兼容实证）/ undici fetch 注入（连接器不匹配实证）/ 维持 CJS stub（缺 emitAsPromise 系真实根因）| 真实代码零手写误差；msw-xhr 2/2 转正全绿，失败套件 53→52 净减 1
+[2026-11-02] DECISION | jest.setup MockResponse 响应交付契约 | 补 arrayBuffer() + body 惰性单 chunk 流（respondWith→getBodyByteLength/流式收集的硬依赖）| 弃用 MockResponse 换全局实现（存量套件影响面大）| jest.setup:130 覆写后 MockResponse 是唯一全局 Response 实现，最小补面零存量破坏
+[2026-11-02] DECISION | Mimosa 两处 medium 污点核销 | app.ts:491 确认误报仅记录（limit 白名单校验 + postgres $1/$2 参数化双断链）；relay-cli.ts:22 补 http/https 协议守卫 fail-fast | 全部按疑似忽略不改码 | 协议守卫提供真实 fail-fast 契约价值，非应付扫描器

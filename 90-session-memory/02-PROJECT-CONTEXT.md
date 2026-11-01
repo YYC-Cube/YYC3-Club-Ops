@@ -30,12 +30,14 @@
 
 ## 测试与门禁
 
-- App 侧：`sync:e2e` 13 场景全过（含并发还原实证）；playwright + vitest
-- CMS 侧：jest + msw，resolver 五链映射 + `listen(error)` 全通；门禁基线 **53/802**
+- App 侧：`sync:e2e` 13 场景全过（含并发还原实证）；playwright + vitest（165 测试全绿）
+- CMS 侧：jest + msw，resolver 五链映射 + `listen(error)` 全通；门禁基线 **52 失败套件 / 805 通过**（2026-11-02 XHR 专项后复测，见 05）
+- msw XHR 拦截：已定案——@happy-dom/jest-environment docblock + rettime/until-async/deferred-promise esbuild 真实转译 vendor（再生脚本 `scripts/msw-vendor.sh`，升版必跑）
 - react-compiler：purity/set-state 规则 error 严格态（7 处行级豁免白名单）
 
 ## 已知坑（勿重踩）
 
-1. happy-dom 包不兼容 Jest 29（XHR 专项已实证回滚 undici 方案）
-2. 模块级 SQL 常量触发 Mimosa 误拦——函数内参数化模板可过
-3. 多编辑后整文件 Write 前必须重读（防 stale 快照覆盖）
+1. happy-dom 整包环境不兼容 Jest 29（已实证）；per-file docblock 方案已定案可用
+2. msw 三 ESM 依赖（rettime 等）禁止回退 CJS stub——stub 缺 emitAsPromise 是 XHR 专项根因
+3. 模块级 SQL 常量触发 Mimosa 误拦——函数内参数化模板可过
+4. 多编辑后整文件 Write 前必须重读（防 stale 快照覆盖）

@@ -16,6 +16,11 @@ async function main(): Promise<void> {
     console.log("[sync] 未配置 SYNC_CMS_EVENTS_URL，跳过投递（事件保留 pending）")
     return
   }
+  // 投递目标仅允许 http(s)（env 污点 → fetch 断链点；畸形/非网络协议 fail-fast）
+  const parsedEndpoint = new URL(endpoint)
+  if (parsedEndpoint.protocol !== "https:" && parsedEndpoint.protocol !== "http:") {
+    throw new Error(`[sync] SYNC_CMS_EVENTS_URL 仅支持 http/https，收到 ${parsedEndpoint.protocol}`)
+  }
   const { createDatabasePool } = await import("../db/pool")
   const pool = createDatabasePool(resolveDatabaseUrl("owner"), { max: 2 })
   try {
