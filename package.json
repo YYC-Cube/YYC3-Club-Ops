@@ -45,6 +45,8 @@
     "db:seed": "tsx server/db/seed.ts",
     "db:seed:test": "tsx server/db/seed.ts --test",
     "sync:relay": "tsx server/sync/relay-cli.ts",
+    "sync:commands": "tsx server/sync/commands-cli.ts",
+    "sync:e2e": "tsx scripts/sync-e2e.mts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

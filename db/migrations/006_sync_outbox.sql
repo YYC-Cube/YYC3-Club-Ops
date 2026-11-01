@@ -15,6 +15,9 @@ SET search_path = app, public;
 -- 1. app.sync_outbox（03 §1）
 -- ---------------------------------------------------------------------------
 
+-- 修正：初版误加 actor_id FK（超出 03 §1 契约）——已应用库幂等移除
+ALTER TABLE app.sync_outbox DROP CONSTRAINT IF EXISTS sync_outbox_actor_id_fkey;
+
 CREATE TABLE IF NOT EXISTS app.sync_outbox (
   id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id         text NOT NULL REFERENCES app.tenant(id),
@@ -25,7 +28,8 @@ CREATE TABLE IF NOT EXISTS app.sync_outbox (
   event_version     int  NOT NULL DEFAULT 1,
   sequence          bigint NOT NULL,
   occurred_at       timestamptz NOT NULL DEFAULT now(),
-  actor_id          text REFERENCES app.app_user(id),
+  -- 03 §1 契约：actor_id 无 FK——操作者可能来自 CMS 纠正命令（外部 ID），保留原文审计
+  actor_id          text,
   idempotency_key   text NOT NULL,
   payload           jsonb NOT NULL,
   payload_checksum  text NOT NULL,
