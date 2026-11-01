@@ -128,6 +128,42 @@ export async function applyCommand(
     }
   }
 
+  // record.archive：封存/停用（02 §6.2）——产品域复用第一写入方路径，status 置 inactive
+  if (command.commandType === "record.archive" && command.aggregateType === "product") {
+    try {
+      await repository.updateProduct(
+        { ...ctx, userId: command.operatorId || ctx.userId },
+        String(command.aggregateId),
+        { status: "inactive" },
+      )
+      return { status: "applied" }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "apply_failed"
+      console.error(`[sync/commands] 封存失败 commandId=${command.commandId}: ${message}`)
+      return { status: "rejected", errorCode: message.includes("不存在") ? "not_found" : "apply_failed" }
+    }
+  }
+
+  // price.override：强制价格（02 §6.2）——产品域价格覆写
+  if (command.commandType === "price.override" && command.aggregateType === "product") {
+    const overridePrice = command.payload.priceCents
+    if (typeof overridePrice !== "number" || !Number.isInteger(overridePrice) || overridePrice < 0) {
+      return { status: "rejected", errorCode: "invalid_price" }
+    }
+    try {
+      await repository.updateProduct(
+        { ...ctx, userId: command.operatorId || ctx.userId },
+        String(command.aggregateId),
+        { priceCents: overridePrice },
+      )
+      return { status: "applied" }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "apply_failed"
+      console.error(`[sync/commands] 价格覆写失败 commandId=${command.commandId}: ${message}`)
+      return { status: "rejected", errorCode: message.includes("不存在") ? "not_found" : "apply_failed" }
+    }
+  }
+
   if (command.commandType === "device.update") {
     const payload = command.payload
     const deviceType = payload.deviceType

@@ -74,6 +74,36 @@ describe("sync/commands", () => {
     expect(unknown).toMatchObject({ status: "rejected", errorCode: "unsupported_command" })
   })
 
+  it("record.archive：封存商品（status=inactive）+ price.override：强制价格", async () => {
+    const product = await repository.createProduct(CTX, {
+      name: "封存测试商品",
+      category: "酒水",
+      unit: "瓶",
+      priceCents: 2000,
+      stock: 10,
+    })
+
+    const archive = await applyCommand(repository, CTX, {
+      ...buildCommand({ commandType: "record.archive", aggregateId: product.id }),
+      payload: { operation: "archive" },
+    })
+    expect(archive.status).toBe("applied")
+    const archived = (await repository.listProducts(CTX)).find((item) => item.id === product.id)
+    expect(archived).toBeUndefined()
+
+    const override = await applyCommand(repository, CTX, {
+      ...buildCommand({ commandType: "price.override", aggregateId: product.id }),
+      payload: { priceCents: 999 },
+    })
+    expect(override.status).toBe("applied")
+
+    const invalid = await applyCommand(repository, CTX, {
+      ...buildCommand({ commandType: "price.override", aggregateId: product.id }),
+      payload: { priceCents: -5 },
+    })
+    expect(invalid).toMatchObject({ status: "rejected", errorCode: "invalid_price" })
+  })
+
   it("空 fields → rejected empty_patch", async () => {
     const product = await repository.createProduct(CTX, {
       name: "空补丁商品",
