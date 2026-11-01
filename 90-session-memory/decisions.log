@@ -1,0 +1,15 @@
+# decisions.log — 架构决策捕获
+# 格式：[YYYY-MM-DD] DECISION | context | choice | rejected alternative | reason
+# 规则：任何被用户确认或否决的架构选择，运行时即时追加；会话闭合时随 Session Closure 校对。
+
+[2026-11-01] DECISION | 双会话协同模式（App sess_8c66b568 + CMS sess_a54cb15b）| 方案 B：本会话（App 侧）兼两仓主干，CMS 会话停用 | 双会话并行各管一仓 | 契约出入需单一权威源避免口辐漂移；口辐以双向实测校准
+[2026-11-01] DECISION | 同步 relay 鉴权（50c44fa）| HMAC-SHA256 服务签名，去 Bearer 过渡 | 继续 Bearer 过渡方案 | 服务间签名符合 S7 密钥双活与审计要求
+[2026-11-01] DECISION | 命令反向通道（1a094e0）| 拉取 + ACK 闭环 + HMAC 签名 | 推送直连 | 拉取模式天然幂等、断线可续
+[2026-11-01] DECISION | react-compiler 豁免策略（79e25f7/5a0c324）| purity 16 处真修 + set-state 7 处行级豁免，规则恢复 error 严格态 | 全量豁免关闭规则 | 保留编译器保障、豁免最小化可审计
+[2026-11-02] DECISION | 同步命令白名单（ed139d1）| 补齐 record.archive 与 price.override，白名单全开 | 维持最小白名单 | 墓碑联动与审计链路需要命令侧闭环
+[2026-11-02] DECISION | archive 墓碑投影口径（b1a35fd/b750220，CMS 189fb9b）| 增量合并 COALESCE 保旧 + 墓碑联动 + 乱序拒绝 | 全量覆盖投影 | 乱序事件下全量覆盖会复活墓碑、丢失审计行
+[2026-11-02] DECISION | 价格覆写审计口径（f8b54b6）| 三元组 base/override/effective（overrideCents）入协同规范 04 + price.override 注记入 08 | 仅记最终价 | 三元组才能追溯覆写来源与生效路径
+[2026-11-02] DECISION | CMS msw 语义（fa9b78f/b768cb2）| resolver 五链映射 + listen(error)：未处理请求不放行真实网络 | listen(bypass) 放行真实网络兜底 | 测试隔离优先；jsdom XHR 三候选实证入库，msw-xhr 骨架 skip 待专项
+[2026-11-02] DECISION | Mimosa 误报根治与提交政策（398ea76）| 函数内参数化模板写法 + 审核/测试通过后自动 commit + SSH push | 每次人工确认再提交 | 误报已根治，自动化提交符合会话延续性政策
+[2026-11-02] DECISION | 「外部还原」事件归因修正 | 归因为自身 stale 快照覆盖——多编辑后整文件 Write 前必须重读 | 保留「外部还原」结论 | 实证无外部写入者，根因在本方快照过期
+[2026-11-02] DECISION | Session Protocol 文件载体 | 90-session-memory 五文件落 YYC3-Club-Ops 主干仓，CMS 镜像 diff -rq=0 | 仅 auto-memory 承载 / 双仓独立演进 | stage 级上下文需文件链跨会话传递；镜像保证双仓口径一致
