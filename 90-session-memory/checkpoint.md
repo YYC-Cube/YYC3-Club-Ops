@@ -6,19 +6,20 @@
 
 ## current_position
 
-- **msw XHR 拦截专项已收口定案**：@happy-dom/jest-environment（docblock 每文件环境）+
-  rettime/until-async/deferred-promise **esbuild 真实转译 vendor**（再生脚本
-  `scripts/msw-vendor.sh`）；msw-xhr 套件 2/2 转正全绿（0.6s）。
-  真实根因链：CJS stub 缺 `emitAsPromise`（rettime）→ 500 错误注入；MockResponse 缺
-  `arrayBuffer`/`body` 流（respondWith 响应交付硬依赖）——两层均已修复。
-- **门禁基线更新**：52 失败套件 / 805 通过（worktree 基线对照实证：专项前同日 53/804，
-  净减 1=msw-xhr 转绿；其余失败集逐一相同；node-forge 双侧皆红=已知 flaky）。
-  05 文档已更新并双仓镜像。
-- **Mimosa 两处 medium 已核销**：app.ts:491 确认误报（limit 校验 + $1/$2 参数化双断链）；
-  relay-cli.ts:22 补 http/https 协议守卫（Club-Ops vitest 165 全绿实证）。
-- **/re-anchor skill 已落地**（.zcode/skills/re-anchor，frontmatter 验证通过）；
-  本会话手工实跑过 load order 全流程。注册表发现性留待下会话开场实证。
-- 同步通道基线不变：事件/命令双向全通，sync:e2e 13 场景全过。
+- **CMS 测试门禁全量绿达成（修正版）**：78/78 套件、652/658 测试（6 skip）、0 失败（~5s）。
+  存量红分类治理完成——A 类 16 收编 jest ignore（playwright `/e2e/` + 孤儿 `/tests/security/`）；
+  B/C 类 4 全红目录归档 + 13 红灯文件 ignore（混合目录不整目录归档，防连坐绿灯）；
+  D 类真资产 product-dialog 真修 4/4；E 类 node-forge 口径修正 10/10。
+  **执行史**：首版整目录归档连坐 9 个绿灯套件，已 git revert 重做（套件级失败清单为准）。
+  05 已更新镜像（0/652 + 口径史注记）。
+- msw XHR 拦截专项定案不变：@happy-dom docblock + vendor 转译；product-dialog 借同链真修，
+  实证新环境约束：**Radix 弹层交互后 happy-dom 按钮点击→submit 合成失效**，
+  等价动作为 `fireEvent.submit(form)`（校验→onSubmit 链路一致）。
+- P2 迁移文件已补提交（6ad3115，product-projection 运行时依赖实证）；
+  node-forge 定性=确定性真红非 flaky（3/3 同一断言）。
+- Mimosa 两处 medium 已核销（app.ts:491 误报仅记录 / relay-cli 协议守卫）；
+  Club-Ops vitest 165 全绿；同步通道基线不变（13 场景全过）。
+- /re-anchor skill 已落地，frontmatter 验证通过；注册表发现性待下会话开场实证。
 
 ## active_track
 
@@ -27,8 +28,9 @@ App 侧主干兼两仓协同——YYC3-Club-Ops 为权威版，CMS 按 `docs/YYC
 
 ## open_questions
 
-1. CMS 门禁 52 失败套件的分类治理：结构性红（e2e/*.spec.ts 被 jest 误收的 playwright
-   规格、quick//improved/ 生成式模板）vs 真红——需先出分类清单再定处置方案
-   （收编 ignore / 豁免清单 / 重生成 / 修复）。
-2. node-forge 套件 flaky（两侧皆红、时长漂移）——纳入③类治理一并定性。
-3. 部署上线前置项未盘点：env 校验清单、S7 密钥双活核验步骤待固化。
+1. 部署上线前置项盘点（会话终点）：env 校验清单、S7 密钥双活核验、Mimosa 全仓复扫
+   确认守卫生效口径、双库 5433 生产对应关系确认。
+2. 8 个 ignore 残件与 tests/security 孤儿的物理归档（Mimosa 钩子拦 git mv，待人工
+   `git mv` 至 archive 目录，纯仓库卫生不影响门禁）。
+3. msw-vendor 三链升版联动约束：msw/@mswjs/interceptors 任一升版必须重跑
+   `scripts/msw-vendor.sh` 并复跑 msw-xhr 套件。
