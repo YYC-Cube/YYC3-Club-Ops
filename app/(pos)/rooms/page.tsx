@@ -13,7 +13,6 @@ export default function RoomsPage() {
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
   const [showPOS, setShowPOS] = useState(false)
   const [posRoomId, setPosRoomId] = useState<string | undefined>()
-  const [actionError, setActionError] = useState<string | null>(null)
 
   const currentStore = useStoreContextStore((state) => state.currentStore)
   const currentStoreId = useStoreContextStore((state) => state.currentStoreId)
@@ -24,25 +23,23 @@ export default function RoomsPage() {
   const { rooms, loading, error: roomError, fetchRooms, startRoom, cleanRoom, setMaintenance, resumeRoom } =
     useRoomStore()
 
+  const [actionErrorState, setActionErrorState] = useState<{ storeId: string; message: string } | null>(null)
+  // 错误归属门店：切店后旧店错误不串扰（派生，替代 effect 重置）
+  const actionError = actionErrorState?.storeId === currentStoreId ? actionErrorState.message : null
+  // 选择失效派生校验：切店后所选房间不属于当前门店自动视为未选（替代 effect 重置）
+  const selectedRoom = useMemo(
+    () => rooms.find((room) => room.id === selectedRoomId && room.storeId === currentStoreId) ?? null,
+    [rooms, selectedRoomId, currentStoreId],
+  )
+
   useEffect(() => {
     if (!currentStoreId) return
     // 错误由 store 记录；这里只阻止未处理的 Promise 拒绝。
     void fetchRooms(currentStoreId).catch(() => {})
   }, [currentStoreId, fetchRooms])
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
-    setSelectedRoomId(null)
-    setActionError(null)
-  }, [currentStoreId])
-
-  const selectedRoom = useMemo(
-    () => rooms.find((room) => room.id === selectedRoomId) ?? null,
-    [rooms, selectedRoomId],
-  )
-
   const handleRoomClick = (room: Room) => {
-    setActionError(null)
+    setActionErrorState(null)
     setSelectedRoomId(room.id)
   }
 
@@ -54,7 +51,7 @@ export default function RoomsPage() {
     if (!selectedRoom) return
 
     try {
-      setActionError(null)
+      setActionErrorState(null)
       switch (action) {
         case "start":
           await startRoom(selectedRoom.id)
@@ -81,7 +78,10 @@ export default function RoomsPage() {
           break
       }
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "操作失败，请重试")
+      setActionErrorState({
+        storeId: currentStoreId ?? "",
+        message: error instanceof Error ? error.message : "操作失败，请重试",
+      })
     }
   }
 

@@ -62,12 +62,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const isPosRoute = pathname === "/" || pathname.startsWith("/rooms") || pathname.startsWith("/pos")
   const routeGroup: "pos" | "admin" = isPosRoute ? "pos" : "admin"
   const [activeGroup, setActiveGroup] = useState<"pos" | "admin">(routeGroup)
+  const [prevRouteGroup, setPrevRouteGroup] = useState(routeGroup)
 
-  useEffect(() => {
-    // 路由变化时自动切到对应分组，避免管理端页面看不到自己的导航入口。
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
+  // 路由变化时自动切到对应分组（React 官方「render 期调整 state」模式，替代 effect 内 setState）
+  if (prevRouteGroup !== routeGroup) {
+    setPrevRouteGroup(routeGroup)
     setActiveGroup(routeGroup)
-  }, [routeGroup])
+  }
 
   useEffect(() => {
     if (sessionStatus === "idle" && pathname !== "/login") {

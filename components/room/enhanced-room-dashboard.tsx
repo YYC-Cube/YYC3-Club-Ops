@@ -50,6 +50,146 @@ interface EnhancedRoomDashboardProps {
   onQuickAction?: (action: string, roomId?: string) => void
 }
 
+// mock 数据为纯字面量，提至模块级（react-hooks/set-state-in-effect 消除）
+const MOCK_ROOMS: RoomData[] = [
+  // 小包区 (100-199)
+  {
+    id: "111",
+    number: "111",
+    type: RoomType.SMALL,
+    status: RoomStatus.AVAILABLE,
+    capacity: 8,
+    features: ["小包"],
+  },
+  {
+    id: "112",
+    number: "112",
+    type: RoomType.SMALL,
+    status: RoomStatus.OCCUPIED,
+    capacity: 8,
+    currentGuests: 6,
+    startTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    amount: 580,
+    unpaidAmount: 580,
+    features: ["小包"],
+  },
+  {
+    id: "113",
+    number: "113",
+    type: RoomType.SMALL,
+    status: RoomStatus.CLEANING,
+    capacity: 8,
+    features: ["小包"],
+  },
+
+  // 中包区 (200-299)
+  {
+    id: "201",
+    number: "201",
+    type: RoomType.MEDIUM,
+    status: RoomStatus.AVAILABLE,
+    capacity: 12,
+    features: ["中包"],
+  },
+  {
+    id: "202",
+    number: "202",
+    type: RoomType.MEDIUM,
+    status: RoomStatus.OCCUPIED,
+    capacity: 12,
+    currentGuests: 8,
+    startTime: new Date(Date.now() - 3 * 60 * 60 * 1000),
+    amount: 890,
+    unpaidAmount: 890,
+    features: ["中包"],
+  },
+  {
+    id: "203",
+    number: "203",
+    type: RoomType.MEDIUM,
+    status: RoomStatus.CHECKOUT,
+    capacity: 12,
+    amount: 1200,
+    unpaidAmount: 1200,
+    features: ["中包"],
+  },
+
+  // 大包区 (300-399)
+  {
+    id: "301",
+    number: "301",
+    type: RoomType.LARGE,
+    status: RoomStatus.AVAILABLE,
+    capacity: 15,
+    features: ["大包"],
+  },
+  {
+    id: "302",
+    number: "302",
+    type: RoomType.LARGE,
+    status: RoomStatus.RESERVED,
+    capacity: 15,
+    reservationTime: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    customerName: "张先生",
+    features: ["大包"],
+  },
+
+  // 豪华区 (600-699)
+  {
+    id: "606",
+    number: "606",
+    type: RoomType.SMALL,
+    status: RoomStatus.CLEANING,
+    capacity: 8,
+    features: ["豪华小包"],
+  },
+  {
+    id: "608",
+    number: "608",
+    type: RoomType.SMALL,
+    status: RoomStatus.OCCUPIED,
+    capacity: 8,
+    currentGuests: 6,
+    startTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    amount: 580,
+    unpaidAmount: 580,
+    features: ["豪华小包"],
+  },
+
+  // VIP区 (900+)
+  {
+    id: "999",
+    number: "999",
+    type: RoomType.VIP,
+    status: RoomStatus.OCCUPIED,
+    capacity: 25,
+    currentGuests: 12,
+    startTime: new Date(Date.now() - 4 * 60 * 60 * 1000),
+    amount: 3989,
+    unpaidAmount: 5973,
+    features: ["VIP包"],
+  },
+
+  // 外卖房
+  {
+    id: "pt1",
+    number: "外卖房1",
+    type: RoomType.PRIVATE,
+    status: RoomStatus.AVAILABLE,
+    capacity: 4,
+    features: ["外卖房"],
+  },
+  {
+    id: "pt2",
+    number: "外卖房2",
+    type: RoomType.PRIVATE,
+    status: RoomStatus.CHECKOUT,
+    capacity: 4,
+    unpaidAmount: 300,
+    features: ["外卖房"],
+  },
+]
+
 export default function EnhancedRoomDashboard({ onRoomClick, onQuickAction }: EnhancedRoomDashboardProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const [viewMode, setViewMode] = useState<"large" | "medium" | "small">("medium")
@@ -57,152 +197,9 @@ export default function EnhancedRoomDashboard({ onRoomClick, onQuickAction }: En
   const [selectedArea, setSelectedArea] = useState("全部")
   const [selectedType, setSelectedType] = useState("全部")
   const [selectedStatus, setSelectedStatus] = useState("全部")
-  const [rooms, setRooms] = useState<RoomData[]>([])
+  const [rooms, setRooms] = useState<RoomData[]>(MOCK_ROOMS)
 
 
-  // 模拟包厢数据 - 按房号分类
-  useEffect(() => {
-    const mockRooms: RoomData[] = [
-      // 小包区 (100-199)
-      {
-        id: "111",
-        number: "111",
-        type: RoomType.SMALL,
-        status: RoomStatus.AVAILABLE,
-        capacity: 8,
-        features: ["小包"],
-      },
-      {
-        id: "112",
-        number: "112",
-        type: RoomType.SMALL,
-        status: RoomStatus.OCCUPIED,
-        capacity: 8,
-        currentGuests: 6,
-        startTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
-        amount: 580,
-        unpaidAmount: 580,
-        features: ["小包"],
-      },
-      {
-        id: "113",
-        number: "113",
-        type: RoomType.SMALL,
-        status: RoomStatus.CLEANING,
-        capacity: 8,
-        features: ["小包"],
-      },
-
-      // 中包区 (200-299)
-      {
-        id: "201",
-        number: "201",
-        type: RoomType.MEDIUM,
-        status: RoomStatus.AVAILABLE,
-        capacity: 12,
-        features: ["中包"],
-      },
-      {
-        id: "202",
-        number: "202",
-        type: RoomType.MEDIUM,
-        status: RoomStatus.OCCUPIED,
-        capacity: 12,
-        currentGuests: 8,
-        startTime: new Date(Date.now() - 3 * 60 * 60 * 1000),
-        amount: 890,
-        unpaidAmount: 890,
-        features: ["中包"],
-      },
-      {
-        id: "203",
-        number: "203",
-        type: RoomType.MEDIUM,
-        status: RoomStatus.CHECKOUT,
-        capacity: 12,
-        amount: 1200,
-        unpaidAmount: 1200,
-        features: ["中包"],
-      },
-
-      // 大包区 (300-399)
-      {
-        id: "301",
-        number: "301",
-        type: RoomType.LARGE,
-        status: RoomStatus.AVAILABLE,
-        capacity: 15,
-        features: ["大包"],
-      },
-      {
-        id: "302",
-        number: "302",
-        type: RoomType.LARGE,
-        status: RoomStatus.RESERVED,
-        capacity: 15,
-        reservationTime: new Date(Date.now() + 2 * 60 * 60 * 1000),
-        customerName: "张先生",
-        features: ["大包"],
-      },
-
-      // 豪华区 (600-699)
-      {
-        id: "606",
-        number: "606",
-        type: RoomType.SMALL,
-        status: RoomStatus.CLEANING,
-        capacity: 8,
-        features: ["豪华小包"],
-      },
-      {
-        id: "608",
-        number: "608",
-        type: RoomType.SMALL,
-        status: RoomStatus.OCCUPIED,
-        capacity: 8,
-        currentGuests: 6,
-        startTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
-        amount: 580,
-        unpaidAmount: 580,
-        features: ["豪华小包"],
-      },
-
-      // VIP区 (900+)
-      {
-        id: "999",
-        number: "999",
-        type: RoomType.VIP,
-        status: RoomStatus.OCCUPIED,
-        capacity: 25,
-        currentGuests: 12,
-        startTime: new Date(Date.now() - 4 * 60 * 60 * 1000),
-        amount: 3989,
-        unpaidAmount: 5973,
-        features: ["VIP包"],
-      },
-
-      // 外卖房
-      {
-        id: "pt1",
-        number: "外卖房1",
-        type: RoomType.PRIVATE,
-        status: RoomStatus.AVAILABLE,
-        capacity: 4,
-        features: ["外卖房"],
-      },
-      {
-        id: "pt2",
-        number: "外卖房2",
-        type: RoomType.PRIVATE,
-        status: RoomStatus.CHECKOUT,
-        capacity: 4,
-        unpaidAmount: 300,
-        features: ["外卖房"],
-      },
-    ]
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
-    setRooms(mockRooms)
-  }, [])
 
   // 更新当前时间
 

@@ -111,7 +111,8 @@ const Carousel = React.forwardRef<
         return
       }
 
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
+      // embla 官方样板形态（父子实例上报）；结构化需重写 shadcn Carousel 内聚 useEmblaCarousel，列专项
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       onSelect(api)
       api.on("reInit", onSelect)
       api.on("select", onSelect)

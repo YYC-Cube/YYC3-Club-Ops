@@ -63,19 +63,15 @@ export default function POSSystem({
   const clearReceipt = usePosStore((state) => state.clearReceipt)
   const reset = usePosStore((state) => state.reset)
 
-  const [selectedRoomId, setSelectedRoomId] = useState<string>(roomId ?? "")
+  // 显式选择为 raw；未选时派生兜底到第一个进行中包厢（替代 effect 内同步 setState）
+  const [rawSelectedRoomId, setSelectedRoomId] = useState<string>(roomId ?? "")
+  const selectedRoomId =
+    rawSelectedRoomId || rooms.find((room) => room.status === RoomStatus.OCCUPIED)?.id || ""
   const [category, setCategory] = useState<string>("全部")
   const [keyword, setKeyword] = useState("")
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash")
 
   // 未显式传入房间时：默认选中第一个进行中的包厢
-  useEffect(() => {
-    if (selectedRoomId) return
-    const occupied = rooms.find((room) => room.status === RoomStatus.OCCUPIED)
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 既有合法模式（父子实例同步/路由镜像），结构化改造排入专项
-    if (occupied) setSelectedRoomId(occupied.id)
-  }, [rooms, selectedRoomId])
-
   useEffect(() => {
     // 同一门店的包厢已由房间页加载时不再重拉，避免把本地最新状态覆盖回初始值。
     if (!currentStoreId || activeRoomStoreId === currentStoreId) return
