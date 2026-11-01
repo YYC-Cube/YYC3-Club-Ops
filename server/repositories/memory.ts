@@ -71,6 +71,8 @@ interface ServerState {
   authAudit: AuthAuditEntry[]
   auditSeq: number
   itemSeq: number
+  /** 门店设置聚合（store_id → config/version）；applySettings 与 settings.update 命令共用 */
+  settingsByStore: Record<string, { config: Record<string, unknown>; version: number }>
   /** 内存模式同步事件（与 app.sync_outbox 同构的最小投影，单测断言用） */
   syncEvents: SyncEventRecord[]
 }
@@ -114,6 +116,7 @@ export function createSeedState(): ServerState {
     authAudit: [],
     auditSeq: 0,
     itemSeq: 0,
+    settingsByStore: {},
     syncEvents: [],
   }
 }
@@ -129,6 +132,39 @@ export class MemoryRepository implements AppRepository {
   constructor(users: ServerUser[], state: ServerState = createSeedState()) {
     this.users = users
     this.state = state
+  }
+
+  async applySettings(
+    ctx: StoreContext,
+    config: Record<string, unknown>,
+    operatorId: string,
+  ): Promise<{ version: number }> {
+    return this.mutate((state) => {
+      const current = state.settingsByStore[ctx.storeId]
+      const version = (current?.version ?? 0) + 1
+      state.settingsByStore[ctx.storeId] = { config, version }
+      const recordVersion =
+        state.syncEvents.filter(
+          (item) => item.aggregateType === "settings" && item.aggregateId === ctx.storeId,
+        ).length + 1
+      this.enqueueEvent(state, {
+        aggregateType: "settings",
+        aggregateId: ctx.storeId,
+        eventType: "master.settings.updated",
+        idempotencyKey: `master_settings:${ctx.storeId}:v${version}`,
+        actorId: operatorId,
+        occurredAt: new Date().toISOString(),
+        payload: {
+          operation: "update",
+          writer: "app",
+          recordVersion,
+          storeId: ctx.storeId,
+          domain: "store_settings",
+          config,
+        },
+      })
+      return { version }
+    })
   }
 
   async read<T>(reader: (state: ServerState) => T): Promise<T> {

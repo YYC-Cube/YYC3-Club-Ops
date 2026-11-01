@@ -1,9 +1,6 @@
-import { FlatCompat } from "@eslint/eslintrc"
-import path from "node:path"
-import { fileURLToPath } from "node:url"
-
-const baseDirectory = path.dirname(fileURLToPath(import.meta.url))
-const compat = new FlatCompat({ baseDirectory })
+// ESLint flat config（Next 16 起 eslint-config-next 仅提供 flat 导出，不再经 FlatCompat 转换）。
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals"
+import nextTypescript from "eslint-config-next/typescript"
 
 const config = [
   {
@@ -17,7 +14,8 @@ const config = [
       "next-env.d.ts",
     ],
   },
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextCoreWebVitals,
+  ...nextTypescript,
   {
     rules: {
       // 存量代码先以警告收敛，新增代码不得新增告警。
@@ -27,9 +25,12 @@ const config = [
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
       "react/no-unescaped-entities": "warn",
+      // Next 16 / React Compiler 新规则：存量命中约 25 处，降级为警告过渡；
+      // 逐点修复（纯函数化渲染、effect 内 setState 移出）列入跟进项，修复一处删一处。
+      "react-hooks/purity": "warn",
+      "react-hooks/set-state-in-effect": "warn",
     },
   },
 ]
 
 export default config
-

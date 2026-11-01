@@ -1189,6 +1189,42 @@ export class PostgresRepository implements AppRepository {
     })
   }
 
+  async applySettings(
+    ctx: StoreContext,
+    config: Record<string, unknown>,
+    operatorId: string,
+  ): Promise<{ version: number }> {
+    return this.withStore(ctx, async (client) => {
+      const upserted = await client.query<{ version: number | string }>(
+        `INSERT INTO app.store_settings (store_id, config, version, updated_by)
+         VALUES ($1, $2::jsonb, 1, $3)
+         ON CONFLICT (store_id) DO UPDATE SET
+           config = $2::jsonb, version = app.store_settings.version + 1, updated_by = $3
+         RETURNING version`,
+        [ctx.storeId, JSON.stringify(config), operatorId],
+      )
+      const version = Number(upserted.rows[0]?.version ?? 1)
+      await enqueueSyncEvent(client, {
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        aggregateType: "settings",
+        aggregateId: ctx.storeId,
+        eventType: "master.settings.updated",
+        actorId: operatorId,
+        idempotencyKey: `master_settings:${ctx.storeId}:v${version}`,
+        payload: {
+          operation: "update",
+          writer: "app",
+          recordVersion: version,
+          storeId: ctx.storeId,
+          domain: "store_settings",
+          config,
+        },
+      })
+      return { version }
+    })
+  }
+
   async close(): Promise<void> {
     await this.pool.end()
   }

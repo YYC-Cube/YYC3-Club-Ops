@@ -137,6 +137,12 @@ export interface AppRepository {
     productId: string,
     patch: UpdateProductInput,
   ): Promise<PosProduct>
+  /** 应用门店设置（App 写；settings.update 命令与本地编辑共用）；同事务发 master.settings.updated */
+  applySettings(
+    ctx: StoreContext,
+    config: Record<string, unknown>,
+    operatorId: string,
+  ): Promise<{ version: number }>
   /** 进行中房间账单（房费按 asOf 实时估算，商品按明细累计）；无进行中订单返回 null */
   getRoomBill(ctx: StoreContext, roomId: string, asOf: Date): Promise<RoomBill | null>
   /** 点单：校验商品/库存，快照单价，扣减库存；返回最新账单 */

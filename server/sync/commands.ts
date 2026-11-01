@@ -108,6 +108,26 @@ export async function applyCommand(
   ctx: StoreContext,
   command: SyncCommand,
 ): Promise<{ status: "applied" | "rejected"; errorCode?: string }> {
+  if (command.commandType === "settings.update") {
+    const domain = command.payload.domain
+    const config = command.payload.config
+    if (domain !== "store_settings" || typeof config !== "object" || config === null) {
+      return { status: "rejected", errorCode: "invalid_settings_payload" }
+    }
+    try {
+      await repository.applySettings(
+        ctx,
+        config as Record<string, unknown>,
+        command.operatorId || ctx.userId,
+      )
+      return { status: "applied" }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "apply_failed"
+      console.error(`[sync/commands] 设置应用失败 commandId=${command.commandId}: ${message}`)
+      return { status: "rejected", errorCode: "apply_failed" }
+    }
+  }
+
   if (command.commandType === "record.upsert" && command.aggregateType === "product") {
     const fields = (command.payload.fields ?? {}) as Record<string, unknown>
     const patch: UpdateProductPatch = {}
