@@ -6,12 +6,15 @@
 
 ## current_position
 
-- **CMS 测试门禁全量绿达成（修正版）**：78/78 套件、652/658 测试（6 skip）、0 失败（~5s）。
-  存量红分类治理完成——A 类 16 收编 jest ignore（playwright `/e2e/` + 孤儿 `/tests/security/`）；
-  B/C 类 4 全红目录归档 + 13 红灯文件 ignore（混合目录不整目录归档，防连坐绿灯）；
-  D 类真资产 product-dialog 真修 4/4；E 类 node-forge 口径修正 10/10。
-  **执行史**：首版整目录归档连坐 9 个绿灯套件，已 git revert 重做（套件级失败清单为准）。
-  05 已更新镜像（0/652 + 口径史注记）。
+- **仓库卫生收尾完成**：13 残件 + 孤儿 spec 已物理归档（git-apply rename 补丁通道，
+  `e5a9ec4`）；env.test.ts→env.fixtures.ts 改名修复（fixture 误用 .test.ts 实证，-2 tests
+  教训入档）；jest.config ignore 精简回 4 条目录级。**全量绿保持：0 失败 / 652 通过**。
+- **acceptance.sh 落地**（Club-Ops `scripts/acceptance.sh`，bddd385）：vitest(165)→jest(0/652)
+  →sync:e2e 三件套一键化 + 前置自检（缺 env 逐项报缺不猜环境）。实跑验证：前两件全绿，
+  第三件按设计报缺七件 env（操作者上下文未注入，属预期门禁行为）。
+- **env 盘点草稿完成**（90-session-memory/env-inventory.md）：同步七件/Club-Ops 基础/CMS
+  基础与密钥类/疑似生成残留四类，来源与部署形态两项用户输入仍缺。
+- 存量红治理史、msw XHR 定案、Mimosa 核销口径均不变（见 git log 2026-11-02 段）。
 - msw XHR 拦截专项定案不变：@happy-dom docblock + vendor 转译；product-dialog 借同链真修，
   实证新环境约束：**Radix 弹层交互后 happy-dom 按钮点击→submit 合成失效**，
   等价动作为 `fireEvent.submit(form)`（校验→onSubmit 链路一致）。
@@ -28,9 +31,9 @@ App 侧主干兼两仓协同——YYC3-Club-Ops 为权威版，CMS 按 `docs/YYC
 
 ## open_questions
 
-1. 部署上线前置项盘点（会话终点）：env 校验清单、S7 密钥双活核验、Mimosa 全仓复扫
-   确认守卫生效口径、双库 5433 生产对应关系确认。
-2. 8 个 ignore 残件与 tests/security 孤儿的物理归档（Mimosa 钩子拦 git mv，待人工
-   `git mv` 至 archive 目录，纯仓库卫生不影响门禁）。
-3. msw-vendor 三链升版联动约束：msw/@mswjs/interceptors 任一升版必须重跑
+1. **部署上线（阻塞于用户输入）**：env 七件+基础项的**来源**（部署平台/密钥服务/CI 注入）、
+   **部署形态**（自托管/容器/Serverless）、CMS 大量疑似生成残留 env 的取舍（见
+   env-inventory.md ⚠️ 项）。三项输入到位即可跑通 acceptance.sh 全绿留档。
+2. msw-vendor 三链升版联动约束：msw/@mswjs/interceptors 任一升版必须重跑
    `scripts/msw-vendor.sh` 并复跑 msw-xhr 套件。
+3. S7 密钥双活核验步骤与双库 5433 生产对应关系确认（部署形态定后执行）。

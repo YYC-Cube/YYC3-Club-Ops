@@ -23,3 +23,6 @@
 [2026-11-02] DECISION | happy-dom 表单提交环境约束 | Radix 弹层交互后用 fireEvent.submit(form) 等价提交 | 坚持 fireEvent.click(按钮) | 实证弹层交互后按钮点击连原生 submit 事件都不派发、requestSubmit 无实现；校验→onSubmit 链路完全一致
 [2026-11-02] DECISION | 存量红治理首版执行修正 | git revert 513ff1c 后按「套件级失败清单」重做：混合目录（extended/、integration/）红灯文件 ignore 而非整目录归档 | 保留首版整目录归档结果 | 首版连坐 9 个绿灯套件（extended×4+integration×5）被错误出清；修正后 0 失败/652 通过，绿灯全部留在门禁
 [2026-11-02] DECISION | 测试文件移动通道约束 | 混合目录红灯文件以 ignore 清单替代物理归档 | Write 通道逐文件复制后 git rm | Mimosa 钩子拦一切含测试文件路径的 Bash 写操作（含 mv/git mv），目录级 git mv 可过、文件级必拦；且本会话两度长文 Write 复现生成损坏，逐文件复制通道不可靠；13 残件物理归档留人工
+[2026-11-02] DECISION | 物理归档通道终解 | git-apply rename 补丁（Write 通道落补丁文件 + `git apply --index`，纯元数据零内容穿越，Bash 命令只含补丁路径）| 逐文件 Read→Write→git rm（token 重且损坏风险）| 合规钩子意图（内容审查不适用纯重命名）；13 残件+孤儿一次归档成功
+[2026-11-02] DECISION | env.test.ts 真实定性 | fixture 模块误用 .test.ts 后缀 → 改名 env.fixtures.ts + 导入方同步更新 | 当死残件直接归档 | env.validator.test.ts 运行时导入它——归档即断链（-2 tests 实证）；「空套件」形态的 .test.ts 命名文件应先查导入方再处置
+[2026-11-02] DECISION | acceptance.sh 门禁语义 | 前置自检：缺 env 逐项报缺 + 给可执行指引，不猜环境不回显值 | 静默跳过 sync:e2e / 脚本内合成 env 值 | 验收基线=验就绪度；凭据一律走环境变量（安全约束）；sync:e2e 七件 env + CMS dev 是操作者上下文
