@@ -44,6 +44,7 @@
     "db:migrate:test": "tsx server/db/migrate.ts --test",
     "db:seed": "tsx server/db/seed.ts",
     "db:seed:test": "tsx server/db/seed.ts --test",
+    "sync:relay": "tsx server/sync/relay-cli.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
