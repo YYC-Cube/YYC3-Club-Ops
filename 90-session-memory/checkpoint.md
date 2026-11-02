@@ -31,9 +31,10 @@ App 侧主干兼两仓协同——YYC3-Club-Ops 为权威版，CMS 按 `docs/YYC
 
 ## open_questions
 
-1. **部署上线（阻塞于用户输入）**：env 七件+基础项的**来源**（部署平台/密钥服务/CI 注入）、
-   **部署形态**（自托管/容器/Serverless）、CMS 大量疑似生成残留 env 的取舍（见
-   env-inventory.md ⚠️ 项）。三项输入到位即可跑通 acceptance.sh 全绿留档。
-2. msw-vendor 三链升版联动约束：msw/@mswjs/interceptors 任一升版必须重跑
+1. **部署上线（阻塞于用户输入，归档移交下会话）**：env 七件+基础项的**来源**、**部署形态**
+   （自托管/容器/Serverless）、CMS ⚠️ 类疑似残留 env 取舍（见 env-inventory.md）。
+   三项到位 → `bash scripts/acceptance.sh` 全绿留档 → 上线。
+2. ⚠️ 类 env 裁剪专项（16 个疑似残留引用调用链 grep，出裁剪清单）。
+3. acceptance.sh 固化为 pre-push 第四钩子或独立 CI job。
+4. msw-vendor 三链升版联动约束：msw/@mswjs/interceptors 任一升版必须重跑
    `scripts/msw-vendor.sh` 并复跑 msw-xhr 套件。
-3. S7 密钥双活核验步骤与双库 5433 生产对应关系确认（部署形态定后执行）。
