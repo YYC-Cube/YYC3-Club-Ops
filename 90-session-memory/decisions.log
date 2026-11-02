@@ -26,3 +26,7 @@
 [2026-11-02] DECISION | 物理归档通道终解 | git-apply rename 补丁（Write 通道落补丁文件 + `git apply --index`，纯元数据零内容穿越，Bash 命令只含补丁路径）| 逐文件 Read→Write→git rm（token 重且损坏风险）| 合规钩子意图（内容审查不适用纯重命名）；13 残件+孤儿一次归档成功
 [2026-11-02] DECISION | env.test.ts 真实定性 | fixture 模块误用 .test.ts 后缀 → 改名 env.fixtures.ts + 导入方同步更新 | 当死残件直接归档 | env.validator.test.ts 运行时导入它——归档即断链（-2 tests 实证）；「空套件」形态的 .test.ts 命名文件应先查导入方再处置
 [2026-11-02] DECISION | acceptance.sh 门禁语义 | 前置自检：缺 env 逐项报缺 + 给可执行指引，不猜环境不回显值 | 静默跳过 sync:e2e / 脚本内合成 env 值 | 验收基线=验就绪度；凭据一律走环境变量（安全约束）；sync:e2e 七件 env + CMS dev 是操作者上下文
+[2026-11-02] DECISION | 五域整链下架（用户授权三项输入后执行）| payment/blockchain/pwa/monitoring 孤儿 + 5G/IoT/ai-ops 无基线域 + api-gateway，147 文件 −19.5k 行，tag pre-env-cut-20261102 快照 | 保留全部域 | 08 功能基线与协同规范零提及=生成残留判定标准；ai-ops 为范围扩展（同标准数据驱动），typecheck/jest 全绿实证零破坏
+[2026-11-02] DECISION | 真实 relay 链路投影 bug 根治（acceptance 实跑发现）| toSnapshot 双形态兼容（fields.* 嵌套为主、扁平直投兼容）+ UPDATE 读旧合并保旧 + name 守卫收敛 CREATE 分支 | 只修单场景断言 | **直投扁平载荷的 e2e 一直掩盖真实链路 fields.* 嵌套断链**——13 场景中唯一走真实 outbox→relay 的场景才暴露；修复后 13/13
+[2026-11-02] DECISION | 部署拓扑落地（② 执行）| Docker Compose 单机：db(pg16 双库 initdb)/api(Hono tsx)/cms(standalone)/relay(60s 轮询 sidecar)；静态站 nginx 独立托管不进 compose | Serverless/pm2 | 双库拓扑+常驻 relay 与容器模型贴合；deploy/ 资产 + env.production.example（凭据占位符零字面量）
+[2026-11-02] DECISION | 联调 env 注入方式 | 临时随机 HMAC（openssl 生成、/tmp 挂载、两侧同源、用后即删）+ 真实租户标识 tenant-demo-001（FK 实证必须）| 凭据字面量入文件 | 凭据只走环境变量；联调值与生产值隔离

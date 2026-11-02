@@ -1,0 +1,74 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in deploy/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env}
+      POSTGRES_DB: yyc3_club_ops
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./pg-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${DB_PORT:-5433}:5432"
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      APP_ORIGIN: ${APP_ORIGIN}
+      SESSION_SECRET: ${SESSION_SECRET}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/yyc3_club_ops
+      DATABASE_OWNER_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/yyc3_club_ops
+      SYNC_CMS_COMMANDS_URL: http://cms:3030/api/v1/sync/commands
+      SYNC_HMAC_ACCESS_KEY: ${SYNC_HMAC_ACCESS_KEY}
+      SYNC_HMAC_SECRET: ${SYNC_HMAC_SECRET}
+    depends_on:
+      - db
+    ports:
+      - "${API_PORT:-4000}:4000"
+
+  cms:
+    build:
+      context: ../../YYC3-Clube-Management-System
+      dockerfile: deploy/cms.Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/yyc3_yy
+      PG_DATABASE: yyc3_yy
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET}
+      ENCRYPTION_SALT: ${ENCRYPTION_SALT}
+      SYNC_HMAC_ACCESS_KEY: ${SYNC_HMAC_ACCESS_KEY}
+      SYNC_HMAC_SECRET: ${SYNC_HMAC_SECRET}
+      SYNC_HMAC_TENANT: ${SYNC_HMAC_TENANT}
+      SYNC_CMS_EVENTS_URL: http://localhost:3030/api/v1/sync/events
+    depends_on:
+      - db
+    ports:
+      - "${CMS_PORT:-3030}:3030"
+
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/yyc3_club_ops
+      DATABASE_OWNER_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/yyc3_club_ops
+      SYNC_CMS_EVENTS_URL: http://cms:3030/api/v1/sync/events
+      SYNC_HMAC_ACCESS_KEY: ${SYNC_HMAC_ACCESS_KEY}
+      SYNC_HMAC_SECRET: ${SYNC_HMAC_SECRET}
+    depends_on:
+      - db
+      - cms
+    entrypoint: ["/bin/sh", "-c", "while true; do tsx server/sync/relay-cli.ts || true; sleep 60; done"]
+
+volumes:
+  pgdata:
