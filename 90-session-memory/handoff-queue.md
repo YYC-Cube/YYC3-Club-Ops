@@ -6,13 +6,14 @@
 
 ## next_action
 
-- **动作**：**生产上线操作（纯操作者动作，代码侧全绿就绪）**——`deploy/.env` 填真实凭据
-  （模板 env.production.example；凭据走面板/密钥服务）→ `docker compose up -d --build`
-  → 容器内 `pnpm db:migrate` → 静态站托管选址 → 线上验收。
-- **stage 文件**：`deploy/README.md` + `90-session-memory/env-inventory.md` + `deploy/env.production.example`
-- **需预先准备（用户）**：生产凭据值（POSTGRES/JWT/ENCRYPTION/SESSION/HMAC 七件）+ 静态站托管选址。
-- **风险提示**：`docker compose` 首次构建 CMS 镜像约数分钟（next build）；迁移在容器网络内跑
-  （owner 连接串指向 compose db）；sync relay 已含 60s 轮询 sidecar 无需宿主 cron。
+- **动作**：**生产上线操作（你补值 → 起栈）**——`deploy/.env`（37 键全量清单 + 逐项说明，
+  已生成、gitignored 不入库）把 `__FILL__` 占位符补成真实凭据 → `cd deploy && docker compose up -d --build`
+  → 容器内 `pnpm db:migrate` → 静态站托管（out/，nginx 或对象存储）→ 线上验收。
+- **stage 文件**：`deploy/.env`（唯一填充源）+ `deploy/README.md`
+- **需预先准备（你）**：仅需补 `deploy/.env` 里的 `__FILL__` 项（7 组强随机密钥 + 2 个真实
+  主数据标识 + 若干策略值）；主数据标识可先沿用 `tenant-demo-001` / `store-demo-001`（种子存在）。
+- **风险提示**：`docker compose` 首次构建 CMS 镜像约数分钟（next build）；迁移走 compose 网络
+  owner 串；HMAC 三件（ACCESS_KEY/SECRET/TENANT）两侧必须同值。
 
 ## queue（后续排队，按序）
 
